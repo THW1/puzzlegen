@@ -249,6 +249,7 @@ class ConnectorSpec:
 | `tab` | Classic jigsaw knob: Bézier neck plus round head | Yes (neck < head) | Default. Parametrised by neck width, head radius, skew, asymmetry and wobble |
 | `dovetail` | Trapezoid | Yes | Good for laser-cut wood; also used for frame segments |
 | `tee` / `hook` | T or L shapes | Yes | High uniqueness entropy |
+| `swirl` | S-curve along the whole joint, two hooking lobes | Yes (sweep ≥ 180° + margin) | Connector-free look; see §5.4 |
 | `wave` | Sine or spline wiggle with no neck | **No** | Decoration only. Pair with locking edges |
 | `double` | Two small tabs, opposite sides | Yes, strong | For long edges |
 | `none` | Straight | No | Short edges, or frame edges if desired |
@@ -278,6 +279,82 @@ class ConnectorSpec:
 
 These defaults are engineering starting points, not measured values. Section 11 adds a
 calibration coupon generator to measure them per printer and material.
+
+### 5.4 Shape-locked (connector-free) puzzles
+Goal: pieces that hold together by their outline alone, with no visible knobs. The
+outline itself has to interlock.
+
+**Lock criterion** (implemented in `interlock.py`). Consider one joint between pieces A
+and B on its own. B can slide away from A in direction d exactly when the joint curve
+is a graph over the axis perpendicular to d. That holds when every line parallel to d
+crosses the curve at most once, which is the case when all tangent directions of the
+curve lie in an open half-plane. Hence:
+
+> A joint **locks** iff its unwrapped tangent angle sweeps at least 180°.
+
+If any line parallel to d crosses the curve twice, B is blocked in both +d and −d. So
+a sweep of at least 180° blocks every direction. A margin is added
+(`connectors.lock_margin`, default 20°), so that the overhang survives the clearance
+gap. Examples:
+
+| Joint shape | Sweep | Locks? |
+|-------------|-------|--------|
+| Straight edge, or any convex polygon edge | 0° | no |
+| Semicircular bump (no undercut) | 180° | no (limit case) |
+| Keyhole tab | ≈ 290° | yes |
+| Swirl (below), lobes of 110° each | 220° | yes |
+
+Consequence: tiles bounded by straight edges (Voronoi, Penrose, hats) never lock
+across a single edge. Shape-lock needs either curved joints or grouped outlines.
+
+**Three ways to get shape-lock:**
+
+1. **Swirl joints** (`connectors.kinds = ["swirl"]`, implemented in M2). Most of the
+   joint is replaced by a smooth S-curve with hooking lobes, one into each piece. The
+   result looks organic, Escher-like, with no distinct knob.
+   Construction: prescribe the turning function θ(u) = θₖ · sin 3πu over a window of
+   the joint, with separate amplitudes θ₁, θ₂, θ₃ for the three thirds. The curve
+   rises (crest into one piece), crosses the chord in the middle, and returns (trough
+   into the other piece). Integrate the unit tangent, then rotate and scale so the
+   curve ends exactly on the chord. Sweep = max(θ₁, θ₃) + θ₂; sampling enforces at
+   least 180° + `lock_margin` + 5°.
+   A first version with θ · sin 2πu turned out to rise and fall on the same side: one
+   mushroom-shaped bump, not an S.
+   Feasibility: the curve keeps `min_wall` to both faces' other boundaries. Both
+   faces must survive erosion by (min_neck + clearance)/2 without splitting, *and* an
+   opening by the same radius must not remove material along the middle of the
+   swirl. A lobe with a thin throat vanishes under erosion instead of splitting; this
+   was found when the corner rounding cut such lobes off.
+   **Size limit (measured):** throats reach 3.25 mm only for windows ≥ 16–20 mm. Swirls
+   therefore need joints of about 22 mm or more: use `connectors.min_edge = 22` and
+   larger pieces (about 20 pieces on 180 × 130 mm). Windows are never shrunk on
+   retry, because shrinking only narrows the throats.
+   Uniqueness: the signature is the window curve. The three amplitudes and the
+   window length give a richer alphabet than single tabs. In M2 tests, 20–24-piece
+   swirl puzzles reached a unique exact-solver result.
+2. **Grouped outlines** (`grouping = grow | hierarchy | metatile`, with
+   `connectors.kinds = ["none"]`). Pieces are unions of many small cells (fine hex or
+   triangle grids, Voronoi, Penrose rhombi, hats). Their jagged boundaries overhang
+   where a neighbour's cells reach around a corner.
+   Locking is not automatic, so the `grow` strategy gets a **lock objective**: when a
+   piece chooses its next cell, it prefers cells that create an overhang into a
+   neighbour (the joint sweep increases), and it rejects groupings that leave a piece
+   without any locked joint.
+   For `hierarchy`/`metatile`, candidate supertile levels are scored by their locked
+   fraction, and the best level is chosen.
+3. **Hybrid**: shape-lock where it happens, and tabs only on joints that do not lock by
+   shape (`connectors.placement = "unlocked"`, planned for M3). This keeps knobs rare.
+
+**Requirement for every mode:** each piece needs at least one locked joint. Pieces
+without one are reported as `interlock.loose_pieces`. With
+`connectors.require_lock = true` they are a failed check (exit code 2).
+
+**Limits**:
+- The criterion tests each joint on its own. Two non-locking joints between the same
+  pair of pieces can lock together; the sampled translation test of §7.3 covers that
+  case.
+- The angle margin only approximates "the overhang is deep enough". A later refinement
+  measures the overhang depth directly and requires at least k × clearance.
 
 ---
 
@@ -313,21 +390,25 @@ modes uniqueness is therefore *checked* (signature table plus exact solver for s
 N), not *constructed*. Adding connectors to the longest joints restores U1/U2.
 
 ### 6.3 Edge cleanup
-1. **Merge collinear runs**: consecutive edges between the same two pieces with an
-   angle change < ε become one curve. This matters after hierarchical grouping, where
-   a piece boundary consists of many tiny tile edges. Each maximal chain shared by a
-   piece pair is one joint (Section 2.0).
-2. **Short edge collapse**: edges shorter than `collapse_edge` (default 2 mm) are
-   contracted to a vertex (classic Voronoi cleanup).
-3. **Short joint resolution**: joints shorter than `min_edge` (too short for a lock)
-   are removed by merging the two adjacent pieces, or, if that would make a piece too
-   large, by moving the shared vertices so the joint grows. Short *edges* inside a long
-   joint are harmless.
-4. **Sliver removal** (clip mode): pieces with area < `min_area_ratio` × median area,
-   or with an inscribed-circle radius below `min_feature`, are merged into the
-   neighbour with the longest shared edge.
-5. **Degree-4+ vertices** (Penrose, grids): optionally perturb slightly to split into
-   degree-3 vertices. Degree-4 corners are weak and look like "classic jigsaw".
+Implemented in `cleanup.py` (M2), operating on vertex-index rings before connectors
+are placed:
+1. **Sliver removal**: pieces with area < `min_area_ratio` × median area, or thinner
+   than `min_feature` + clearance, are merged into the neighbour with the longest
+   shared boundary, smallest first. Rings are merged directly, not with Shapely
+   unions, because a union may drop a vertex that a third piece still uses.
+2. **Straightening**: interior vertices used by only two pieces (left over after
+   merges) are removed, so each joint is one straight edge again.
+3. **Short-joint contraction**: interior joints shorter than `connectors.min_edge`
+   (or `cleanup.collapse_edge` when no connectors are used) are contracted to one
+   point, shortest first. The two pieces then touch only at a corner where four
+   pieces meet, as in classic jigsaws. A contraction that would break a face is
+   skipped; boundary vertices never leave the outline. On the 40-piece Voronoi
+   example this turned 28 tab-less joints out of 96 into 0 out of 75.
+4. **Collinear-run merge** (M3, for hierarchical grouping): consecutive edges between
+   the same two pieces become one joint.
+5. **Degree-4+ vertex splitting** (`split_degree4`, M3, for grids and Penrose).
+   Contraction creates degree-4 vertices on purpose, so splitting applies only to
+   tilings that have them natively.
 
 ---
 
@@ -339,88 +420,85 @@ N), not *constructed*. Adding connectors to the longest joints restores U1/U2.
 - **Unique** means that exactly one assembly exists, up to nothing (the frame fixes
   the global pose). Without a frame, it is unique up to a global rigid motion.
 
-### 7.2 Sufficient construction rule: connector uniqueness
-Exact-cover uniqueness for arbitrary shapes is NP-hard in general, so use a
-**constructive sufficient condition** that can be checked cheaply:
+### 7.2 Sufficient conditions and the two guarantee levels
+Exact-cover uniqueness for arbitrary shapes is NP-hard in general, so the tool checks
+sufficient conditions.
 
-> **Rule U1 (locked joints):** every interior joint carries at least one *locking*
-> connector (head with neck narrower than head). Joints too short for one are removed
-> by cleanup (Section 6.3).
+> **Rule U1 (locked joints):** every interior joint carries a locking connector.
+> Joints too short for one are removed by cleanup (§6.3).
 >
-> **Rule U2 (unique heads):** for every head h, the only socket in the whole puzzle
-> that h fits (within tolerance τ, under rotation and, if flippable, reflection) is
-> its true partner. Heads and sockets are compared **locally** (head, neck and a short
-> run of joint curve on both sides, all in absolute mm). The chord length L of the
-> joint is deliberately **not** part of the signature. In an alternative assembly a
-> head may sit in a socket of a joint with a different length, with the rest of the
-> joint bordered by other pieces, so L does not discriminate.
+> **Rule U2 (unique heads):** a head fits no socket in the puzzle other than its true
+> partner (Hausdorff distance ≥ τ, under rotation and, if flippable, reflection).
+> Heads and sockets are compared **locally**, in absolute mm.
 >
-> **Rule U3 (no composite sockets):** a head cannot be received by a pocket that is
-> formed jointly by two or more pieces. This is enforced by `end_margin`: every socket
-> lies strictly inside one piece, and heads are larger than any vertex-region pocket
-> (Section 5.2).
+> **Rule U3 (no composite sockets):** no head can be received by a pocket formed by
+> two pieces. This is enforced by `end_margin`: every socket lies inside one piece.
 
-Argument: in any valid assembly every head must be received by some socket (the
-space is filled exactly). By U3 that socket belongs to a single piece. By U2 it is
-the true partner. One head–socket mate fixes the relative pose of two pieces
-(heads are asymmetric, see `skew`). By U1 every piece is linked to its true
-neighbours through its joints, and the joint graph is connected. So all relative
-poses are forced and the assembly is **unique** (up to a global rigid motion
-without a frame; the frame fixes that too).
+Argument: in any valid assembly every head sits in some socket (the area is filled
+exactly). By U3 that socket belongs to one piece, and by U2 it is the true partner.
+Each mate fixes a relative pose, and the mate graph is connected (checked), so every
+pose is forced.
 
-The frame is not needed for uniqueness. Frame connectors (`frame.connectors`)
-add robustness (more constraints) and make the frame part of the lock.
+**Capacity limit (measured in M2).** At τ = 0.75 mm, random greedy packing found only
+about 10 distinguishable tab shapes with the M1 parameter ranges, about 60 with the
+widened M2 ranges (tilt ± 25°, neck height 0.3–0.9 r, head 5–8 mm), and about 130
+with heads of 4–10 mm (about 75 if flippable). A 40-piece puzzle has about 75 joints.
+Strict U2 is therefore only reachable for small puzzles. The earlier estimate of
+1500–2300 signatures was wrong.
 
-Caveat: U3 is a geometric argument, not a formal proof for every shape. The small-N
-exact solver (Section 7.3) is the end-to-end check, and the M2 exit criterion uses it.
+So two levels are reported (`checks.uniqueness.guarantee`):
 
-Tolerance τ: two signatures count as "compatible" if their distance is below
-`τ = k · clearance` (k ≈ 3). With a 0.25 mm clearance, connectors that differ by less
-than about 0.75 mm in any shape feature are treated as interchangeable. This is
-conservative, because a real person *will* force a near-fit.
+| Level | Condition | Meaning |
+|-------|-----------|---------|
+| `strict` | U2 holds for every connector | Unique by the argument above (with U1, U3 and a connected mate graph) |
+| `joint-level` | No shape-compatible pair whose joints also end at the same two points when mated | A false mate would need the rest of the joint bordered by other pieces meeting it mid-edge (T-junctions), and that would have to continue consistently through the whole puzzle. Not excluded in principle, but very contrived |
 
-### 7.3 Signature and verifier
-- **Connector signature**: resample head + neck + a short joint run on both sides to
-  M points in absolute mm, in a frame anchored at the neck midpoint and aligned with
-  the local joint tangent. Compare with the minimum over the orientations {as mated,
-  reflected if flippable}. Use the L2 distance of resampled points or the
-  turning-function distance. A coarse pre-filter on (head width, head depth, neck
-  width) with a KD-tree makes the comparison near-linear.
-- **Verifier output**: a sparse head × socket compatibility table, a list of
-  ambiguous pairs with their distance, and interlock status per joint.
-- **Interlock (pairwise separation) test**: for each joint (A, B), test whether B can
-  translate by a distance larger than the connector depth in some direction
-  (sampled over 0–360°, 5° steps), considering *only A*, without intersecting A.
-  The test uses the un-offset outlines, because clearance always allows tiny motions.
-  A joint is **locked** if no direction is free. (Testing a piece against all its
-  neighbours at once is meaningless: an interior piece is always blocked in every
-  direction.) Joints that are not locked are reported. They are fatal only where the
-  config requires connectors.
-- **Optional exact solver** (small N ≤ ~30, for test and debug only): backtracking
-  over frame cavity positions, using the compatibility table as the candidate
-  generator.
+`ok` requires no joint-level ambiguity, a connected mate graph, and (when it runs)
+at most one solution from the exact solver.
 
-### 7.4 Uniqueness optimiser
-Connector parameters are the degrees of freedom. Random assignment does not work at
-scale: with n joints and m distinguishable signatures, the expected number of
-colliding pairs is about n²/(2m) (birthday problem). For n = 1000 and m ≈ 2000 that is
-about 250 collisions. So signatures are **assigned deliberately**:
-1. Quantise each connector parameter into levels that are at least τ apart
-   (head width, head depth, neck width, skew, position t, kind). The Cartesian
-   product is the signature alphabet.
-2. Assign signatures greedily, ordered by joints with the smallest feasibility zone
-   first (they have the fewest options). Each joint takes a signature that is not yet
-   used and fits its zone. Alternate `side` so that each piece gets a mix of heads and
-   sockets; avoid pieces with only heads or only sockets.
-3. Run the verifier. For any remaining ambiguous pair, re-assign one member and
-   re-check locally. Iterate until there are no conflicts or `max_iter` is reached.
-4. If conflicts remain, report them and fail unless `--allow-ambiguous` is set.
+Rejected: **pose exclusion.** The idea was to place A so that its head sits in B's
+socket and reject the mate if A overlaps B or leaves the region. Convex pieces never
+overlap across a straight joint, and in an alternative assembly B itself may sit
+elsewhere, so the region test is invalid. In M2 tests it excluded nothing.
 
-Capacity estimate: about 4 shape parameters × 4 levels × 3 positions × 2–3 kinds gives
-roughly 1500–2300 signatures, enough for the ~100–1000 joints of a typical puzzle
-when assigned without repetition. Penrose rhombi are the hardest case, because all
-their joints are equally short and the feasibility zones are small. Double connectors
-on long joints double the alphabet.
+Tolerance τ = `tolerance_k` × clearance (default 3 × 0.25 = 0.75 mm). Connectors that
+differ by less count as interchangeable. This is conservative, because people force
+near-fits.
+
+### 7.3 Signature and verifier (`uniqueness.py`)
+- **Profile**: one side of a decorated joint, seen from that piece. Origin at the
+  connector's base midpoint, x along the piece's counter-clockwise direction, y along
+  its outward normal (a head has y > 0). Two profiles a and b can mate iff a ≈ −b; the
+  true partner gives exactly −a. A KD-tree on bounding-box features pre-filters the
+  pairs; the exact test is the Hausdorff distance.
+- **Joint-level test**: for a shape-compatible pair, check whether both joints'
+  endpoints coincide when mated (within τ).
+- **Mate graph**: pieces linked by decorated joints; it must have one component.
+- **Interlock (pairwise separation) test**: decided analytically per joint by the
+  turning criterion (§5.4). A sampled translation test for pairs of pieces that share
+  several joints follows in M3.
+- **Exact solver** (`uniqueness.exact_solver`, auto for ≤ 30 pieces): depth-first
+  placement through shape-compatible mates, counting overlap-free assemblies inside
+  the region up to 2, with a 20 000-node budget. This includes T-junction placements.
+  It only explores assemblies whose pieces attach to the first piece through mates.
+
+### 7.4 Optimiser (`connectors/__init__.py`, `pipeline.py`)
+1. Joints are processed shortest first (fewest feasible shapes).
+2. For each joint, 8 random candidates (tab and/or swirl) are drawn and ranked by
+   distance to the most similar connector already placed (capped at τ): first among
+   connectors whose joints would also end at the same points when mated (the
+   joint-level criterion), then among all. The first feasible candidate is taken.
+   Ranking by the joint-level criterion first fixed most grid failures in the M2
+   stress test, because grids have many joints of nearly equal length.
+3. Repair loop: one connector of each **joint-level** ambiguous pair is re-drawn,
+   followed by a new verification. This stops after 10 rounds or `max_iter` re-draws.
+   Shape-only pairs are not chased: beyond the alphabet's capacity re-drawing cannot
+   remove them (measured: 85 pairs left after 2000 re-draws on 75 joints, taking 70 s).
+4. If joint-level ambiguities remain, the uniqueness check fails (exit code 2).
+
+To reach `strict` on larger puzzles: widen `connectors.head_size`, mix `tab` and
+`swirl`, or use fewer pieces. Compound connectors (two heads per joint, M6) would
+square the alphabet.
 
 ### 7.5 Flip prevention (single-sided printing)
 Printed pieces are two-sided, so reflection doubles the ambiguity. Options (combinable):
@@ -505,7 +583,7 @@ puzzlegen/
       __init__.py       # ConnectorSpec, registry, feasibility zone
       tab.py  dovetail.py  tee.py  wave.py
     uniqueness.py       # signatures, compatibility index, optimiser, small exact solver
-    interlock.py        # direction-blocking test
+    interlock.py        # pairwise lock test (turning criterion, §5.4)
     fabricate.py        # clearance offset, checks, piece outlines, frame
     export2d.py         # SVG, DXF, shared-edge paths
     export3d.py         # manifold3d extrusion, chamfers, IDs, packing, STL/3MF
@@ -607,12 +685,12 @@ Full option reference: [`USAGE.md`](USAGE.md).
 | M | Scope | Exit criterion |
 |---|-------|----------------|
 | M0 | Skeleton: config, `PlanarMap`, rect region, grid + Voronoi, `identity`, `tab` connector, SVG preview | Valid partition property tests pass |
-| M1 | Fabrication: clearance, checks, extrusion → STL, frame (clip mode), report | Printed 20-piece puzzle fits |
-| M2 | Cleanup (short edges and short joints, slivers; U1 depends on it) + uniqueness: signatures, verifier, optimiser, small exact solver, flip handling | 0 ambiguous pairs on 100-piece Voronoi; exact solver confirms N = 20 |
-| M3 | Penrose P2/P3 with ancestry; `hierarchy` grouping; collinear-run merge | 100-piece Penrose passes M2 checks |
+| M1 | Fabrication: clearance, checks, extrusion → STL, frame (clip mode), coupon, convex region shapes, interlock report | Printed 20-piece puzzle fits |
+| M2 | Cleanup (slivers, straightening, short-joint contraction); uniqueness verifier with strict/joint-level guarantee, greedy distinct placement, repair loop, exact solver, flip handling; `swirl` joints (§5.4); `verify` command | 0 ambiguous pairs on 100-piece Voronoi; exact solver confirms N = 20 |
+| M3 | Penrose P2/P3 with ancestry; `hierarchy` and `grow` grouping with lock objective (§5.4); `connectors.placement = "unlocked"`; collinear-run merge | 100-piece Penrose passes M2 checks |
 | M4 | Hat (Tile(a,b)) and Spectre; `metatile` grouping; natural border + frame connectors | Hat puzzle in heart-shaped frame passes all checks |
 | M5 | Laser/plotter: shared-edge cut paths, DXF, kerf | Cut test in 3 mm plywood |
-| M6 | Plate packing, 3MF, IDs, coupon command, density images, more connectors | — |
+| M6 | 3MF, density images, tiling rotation, more connector kinds (dovetail, tee, double/compound) | — |
 
 ---
 

@@ -58,18 +58,29 @@ class PlanarMap:
         ids = _cluster(pts, snap)
         uniq, inv = np.unique(ids, return_inverse=True)
         verts = np.array([pts[ids == u].mean(axis=0) for u in uniq])
-
         rings: list[list[int]] = []
         k = 0
         for p in polygons:
-            ring = [int(v) for v in inv[k:k + len(p)]]
+            rings.append([int(v) for v in inv[k:k + len(p)]])
             k += len(p)
+        return cls.from_rings(verts, rings)
+
+    @classmethod
+    def from_rings(cls, verts: np.ndarray, rings: list[list[int]]) -> "PlanarMap":
+        """Build a map from vertex positions and cell rings (vertex indices). Unused
+        vertices are dropped, collapsed vertices removed, rings oriented CCW."""
+        clean: list[list[int]] = []
+        for ring in rings:
             ring = [v for i, v in enumerate(ring) if v != ring[i - 1]]  # drop collapsed
             if len(ring) < 3:
                 continue
             if _signed_area(verts[ring]) < 0:
-                ring.reverse()
-            rings.append(ring)
+                ring = ring[::-1]
+            clean.append(ring)
+        used = sorted({v for r in clean for v in r})
+        new_id = {v: i for i, v in enumerate(used)}
+        verts = np.asarray(verts, float)[used]
+        rings = [[new_id[v] for v in r] for r in clean]
 
         m = cls(verts=verts)
         m.face_edge.append(-1)
@@ -163,6 +174,10 @@ class PlanarMap:
         order = hs[i + 1:] + hs[:i]
         pts = [self.he_points(h) for h in order]
         return LineString(np.concatenate([p[:-1] for p in pts[:-1]] + [pts[-1]]))
+
+    def rings(self) -> list[list[int]]:
+        """Vertex rings of the inner faces (inverse of from_rings)."""
+        return [[self.origin[h] for h in self.face_halfedges(f)] for f in self.inner_faces()]
 
     def is_interior_curve(self, c: int) -> bool:
         h = self.curve_he[c]

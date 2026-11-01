@@ -151,15 +151,19 @@ SCHEMA: dict[str, tuple[Any, Callable[[str, Any], Any]]] = {
     "cleanup.collinear_angle": (5.0, _num(float, 0, 30)),
     "cleanup.collapse_edge": (2.0, _num(float, 0)),
     "cleanup.min_area_ratio": (0.35, _num(float, 0, 1)),
-    "cleanup.split_degree4": (True, _bool),
+    "cleanup.split_degree4": (False, _bool),
 
-    "connectors.kinds": (["tab"], _list_of("tab", "dovetail", "tee", "double", "wave", "none")),
+    "connectors.kinds": (["tab"], _list_of("tab", "dovetail", "tee", "double", "swirl",
+                                            "wave", "none")),
     "connectors.head_size": ([5.0, 8.0], _pair(ordered=True)),
     "connectors.neck_ratio": ([0.55, 0.75], _pair(ordered=True)),
     "connectors.min_edge": (12.0, _num(float, 0, lo_open=True)),
     "connectors.end_margin": (3.0, _num(float, 0)),
-    "connectors.min_wall": (2.0, _num(float, 0)),
+    "connectors.min_wall": (3.5, _num(float, 0)),
     "connectors.double_above": (45.0, _num(float, 0, lo_open=True)),
+    "connectors.lock_margin": (20.0, _num(float, 0, 90)),
+    "connectors.require_lock": (False, _bool),
+    "connectors.placement": ("all", _choice("all", "unlocked")),
 
     "uniqueness.enabled": (True, _bool),
     "uniqueness.tolerance_k": (3.0, _num(float, 1)),
@@ -302,8 +306,11 @@ def _cross_check(v: dict[str, Any]) -> None:
         raise ConfigError("grouping.strategy = \"metatile\" requires tiling.kind = \"hat\"")
     if v["connectors.double_above"] <= v["connectors.min_edge"]:
         raise ConfigError("connectors.double_above must be > connectors.min_edge")
-    if v["connectors.min_wall"] < v["fabrication.min_feature"]:
-        raise ConfigError("connectors.min_wall must be >= fabrication.min_feature")
+    # The wall between a socket and another edge is a link like a neck: after the
+    # clearance offset it must still be >= min_neck (fabricate.py neck check).
+    if v["connectors.min_wall"] < v["fabrication.min_neck"] + v["fabrication.clearance"]:
+        raise ConfigError("connectors.min_wall must be >= fabrication.min_neck + "
+                          "fabrication.clearance")
     a, b = v["tiling.hat.a"], v["tiling.hat.b"]
     if a == 0 or b == 0:
         raise ConfigError("tiling.hat: Tile(1,0) and Tile(0,1) tile periodically; "
@@ -313,14 +320,16 @@ def _cross_check(v: dict[str, Any]) -> None:
 # ---------------------------------------------------------------- milestones
 # (key, allowed values or predicate, milestone that adds the rest)
 _IMPLEMENTED: list[tuple[str, Callable[[Any], bool], str]] = [
-    ("region.shape", lambda x: x == "rect", "M1"),
-    ("region.corner_radius", lambda x: x == 0, "M1"),
+    ("region.shape", lambda x: x != "svg", "M4"),
     ("region.border", lambda x: x == "clip", "M4"),
     ("tiling.kind", lambda x: x in ("voronoi", "grid"), "M3/M4"),
-    ("tiling.rotation", lambda x: x == 0, "M1"),
+    ("tiling.rotation", lambda x: x == 0, "M6"),
     ("tiling.voronoi.size_spread", lambda x: x == 0, "M6"),
     ("grouping.strategy", lambda x: x == "identity", "M3"),
-    ("connectors.kinds", lambda x: set(x) <= {"tab", "none"}, "M2"),
+    ("connectors.kinds", lambda x: set(x) <= {"tab", "swirl", "none"}, "M6"),
+    ("fabrication.mode", lambda x: x == "fdm", "M5"),
+    ("cleanup.split_degree4", lambda x: not x, "M3"),
+    ("connectors.placement", lambda x: x == "all", "M3"),
 ]
 
 

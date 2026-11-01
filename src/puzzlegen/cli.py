@@ -3,8 +3,8 @@
 # Decisions:   argparse, no click/typer dependency (DESIGN 10.2).
 #              All USAGE subcommands exist from the start; those not implemented yet exit
 #              with code 1 and name the milestone, so the CLI surface never changes shape.
-#              M0: `preview` (SVG + report) and `list` work. `generate` also runs when
-#              output.formats asks only for SVG; STL/3MF/DXF arrive in M1/M5.
+#              Implemented: `generate` (SVG, STL), `preview` (SVG + report), `verify`
+#              (prints the checks, writes nothing), `coupon`, `list`. 3MF in M6, DXF in M5.
 # Invariants:  Exit codes: 0 ok, 1 config error, 2 checks failed, 3 internal error
 #              (USAGE 2.3).
 # Related:     config.load, pipeline.run, export2d.preview_svg, report.build.
@@ -20,8 +20,8 @@ from pathlib import Path
 from . import __version__
 from .config import SCHEMA, ConfigError, load
 
-NOT_YET = {"verify": "M2", "coupon": "M1"}
-FORMAT_MILESTONE = {"stl": "M1", "3mf": "M6", "dxf": "M5"}
+NOT_YET: dict[str, str] = {}
+FORMAT_MILESTONE = {"3mf": "M6", "dxf": "M5"}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -39,7 +39,12 @@ def _parser() -> argparse.ArgumentParser:
         p.add_argument("--out", help="output directory")
         p.add_argument("--allow-ambiguous", action="store_true")
         p.add_argument("-v", "--verbose", action="count", default=0)
-    sub.add_parser("coupon", help="fit-test strip for clearance calibration")
+    cp = sub.add_parser("coupon", help="fit-test strip for clearance calibration")
+    cp.add_argument("--clearance", default="0.10:0.40:0.05", metavar="A:B:STEP")
+    cp.add_argument("--thickness", type=float, default=4.0)
+    cp.add_argument("--head-size", type=float, default=6.0)
+    cp.add_argument("--mode", choices=["fdm", "laser"], default="fdm")
+    cp.add_argument("--out", default="out")
     sub.add_parser("list", help="available tilings, groupings, connectors")
     return ap
 
@@ -57,6 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "list":
         _list()
         return 0
+    if args.command == "coupon":
+        return _coupon(args)
     if args.command in NOT_YET:
         print(f"puzzlegen {args.command}: not implemented yet "
               f"(planned for milestone {NOT_YET[args.command]})", file=sys.stderr)
@@ -79,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
                 + '; use `preview` or --set output.formats=\'["svg"]\'')
         from . import export2d, pipeline, report
         res = pipeline.run(cfg)
+        if args.command == "verify":
+            return _print_verify(report.build(res))
     except ConfigError as e:
         print(f"puzzlegen: config error: {e}", file=sys.stderr)
         return 1
@@ -90,15 +99,62 @@ def main(argv: list[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     name = cfg["name"]
     rep = report.build(res)
-    (out / f"{name}_report.json").write_text(report.dumps(rep))
     if cfg["output.preview"] or "svg" in formats:
         (out / f"{name}_preview.svg").write_text(export2d.preview_svg(res))
+    if "stl" in formats:
+        from . import export3d
+        report.add_export(rep, export3d.export(res.fab.outlines, res.frame, cfg, out, name))
+    (out / f"{name}_report.json").write_text(report.dumps(rep))
     s = rep["stats"]
     print(f"{name}: {s['pieces']} pieces, {s['joints']} joints, "
-          f"connectors {s['connectors']} -> {out}/")
+          f"connectors {s['connectors']}, locked joints {rep['checks']['interlock']['locked']}"
+          f" -> {out}/")
     if not report.checks_ok(rep):
         print("puzzlegen: checks failed, see report 'checks'", file=sys.stderr)
         return 2
+    return 0
+
+
+def _print_verify(rep: dict) -> int:
+    from . import report
+    u, il = rep["checks"]["uniqueness"], rep["checks"]["interlock"]
+    print(f"pieces {rep['stats']['pieces']}, joints {rep['stats']['joints']}, "
+          f"connectors {rep['stats']['connectors']}")
+    if u.get("skipped"):
+        print("uniqueness: skipped (uniqueness.enabled = false)")
+    else:
+        print(f"uniqueness: {'OK' if u['ok'] else 'FAILED'} (guarantee: {u['guarantee']}); "
+              f"joint-level ambiguous pairs {len(u['ambiguous_pairs'])}, "
+              f"shape-compatible pairs {len(u['shape_compatible_pairs'])}, "
+              f"mate-graph components {u['mate_graph_components']}")
+        if u["exact_solver"]:
+            print(f"exact solver: {u['exact_solver']}")
+    print(f"interlock: {il['locked']}/{il['joints']} joints lock, "
+          f"loose pieces {il['loose_pieces']}")
+    for name, c in rep["checks"].items():
+        print(f"check {name}: {'ok' if c.get('ok', True) else 'FAILED'}")
+    return 0 if report.checks_ok(rep) else 2
+
+
+def _coupon(args) -> int:
+    from . import coupon
+    try:
+        a, b, step = (float(x) for x in args.clearance.split(":"))
+        if not (0 <= a <= b and step > 0):
+            raise ValueError
+    except ValueError:
+        print("puzzlegen: --clearance expects A:B:STEP with 0 <= A <= B, STEP > 0",
+              file=sys.stderr)
+        return 1
+    if args.mode == "laser":
+        print("puzzlegen coupon --mode laser: not implemented yet (planned for M5)",
+              file=sys.stderr)
+        return 1
+    values = [round(a + k * step, 4) for k in range(int(round((b - a) / step)) + 1)]
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    path = coupon.write(out, values, args.thickness, args.head_size)
+    print(f"coupon: {len(values)} clearance values {values} -> {path}")
     return 0
 
 

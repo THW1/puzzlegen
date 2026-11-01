@@ -342,6 +342,8 @@ formats = ["svg", "dxf"]
 | `ambiguous_pairs > 0` (joint-level) | Add connector kinds (`["tab", "swirl"]`), widen `head_size`, raise `max_iter`, or lower `target_count` |
 | `guarantee = "joint-level"` instead of `"strict"` | Normal above ~25 pieces (limited number of distinguishable tab shapes, DESIGN §7.2). For `strict`: fewer pieces, wider `head_size`, or mixed kinds |
 | Many `skipped_infeasible` with `swirl` | Joints too short: raise `connectors.min_edge` to about 22 and lower `target_count` |
+| Joint-level ambiguity on `grid` tilings | Grid joints have almost equal lengths, so more of them are comparable: raise `tiling.grid.jitter` (0.3 fixed all stress-test cases) or widen `head_size` |
+| `mate_graph_components > 1`, many `skipped_infeasible` | Pieces too small for tabs (below ~18 mm): lower `target_count`, or reduce `head_size`, `min_wall` and `min_neck` together |
 | `interlock.unlocked > 0` | Some joints have no connector (see `connectors.skipped_infeasible`): lower `min_wall`/`head_size` or raise `min_edge`; for shape-locked groupings, add `tab` to `kinds` |
 | `min_neck` violations | Larger pieces (`target_count` ↓), smaller `clearance`, or larger `head_size` |
 | Many slivers along the border | `border = "natural"` or raise `cleanup.min_area_ratio` |

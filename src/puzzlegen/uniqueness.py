@@ -105,17 +105,18 @@ def _hausdorff(p: np.ndarray, q: np.ndarray) -> float:
 
 class Alphabet:
     """Profiles of the connectors placed so far, for greedy distinctness scoring.
-    Stores the negated profiles (what a matching candidate must look like) and their
-    bounding-box features, so scoring is one vectorised prefilter plus a few Hausdorff
-    distances."""
+    Stores the negated profiles (what a matching candidate must look like), their
+    bounding-box features and their mated joint intervals, so scoring is one
+    vectorised prefilter plus a few Hausdorff distances."""
 
     def __init__(self, tau: float, flippable: bool):
         self.tau, self.flippable = tau, flippable
-        self.items: dict[int, list[np.ndarray]] = {}     # curve -> negated profiles
+        self.items: dict[int, list[tuple]] = {}      # curve -> [(neg profile, lo, hi)]
         self._cache: tuple | None = None
 
     def add(self, c: int, sides: list[tuple]) -> None:
-        self.items[c] = [-s[0] for s in sides]
+        # Mated into this profile, a candidate's joint must span [-x_hi, -x_lo].
+        self.items[c] = [(-s[0], -s[3], -s[2]) for s in sides]
         self._cache = None
 
     def remove(self, c: int) -> None:
@@ -124,30 +125,37 @@ class Alphabet:
 
     def _index(self):
         if self._cache is None:
-            owners, negs = [], []
+            owners, negs, spans = [], [], []
             for c, qs in self.items.items():
-                for q in qs:
+                for q, lo, hi in qs:
                     owners.append(c)
                     negs.append(q)
+                    spans.append((lo, hi))
             feats = np.array([_feat(q) for q in negs]) if negs else np.zeros((0, 4))
-            self._cache = (np.array(owners), negs, feats)
+            self._cache = (np.array(owners), negs, feats, np.array(spans).reshape(-1, 2))
         return self._cache
 
-    def score(self, c: int, sides: list[tuple]) -> float:
-        """Distance to the most similar placed connector, capped at tau."""
-        owners, negs, feats = self._index()
+    def score(self, c: int, sides: list[tuple]) -> tuple[float, float]:
+        """(joint-level, strict) distance to the most similar placed connector, each
+        capped at tau. Joint-level only counts connectors whose joints would end at
+        the same points when mated - the criterion verify() fails on - so candidates
+        are ranked by it first."""
+        owners, negs, feats, spans = self._index()
         if not negs:
-            return self.tau
-        cand = [s[0] for s in sides]
+            return self.tau, self.tau
+        cand = [(s[0], s[2], s[3]) for s in sides]
         if self.flippable:
-            cand += [p * np.array([-1.0, 1.0]) for p in cand]
-        best = self.tau
-        for p in cand:
-            near = np.nonzero(np.all(np.abs(feats - _feat(p)) < best, axis=1)
+            cand += [(p * np.array([-1.0, 1.0]), -hi, -lo) for p, lo, hi in cand]
+        best_s = best_j = self.tau
+        for p, lo, hi in cand:
+            near = np.nonzero(np.all(np.abs(feats - _feat(p)) < best_s, axis=1)
                               & (owners != c))[0]
             for k in near:
-                best = min(best, _hausdorff(p, negs[k]))
-        return best
+                d = _hausdorff(p, negs[k])
+                best_s = min(best_s, d)
+                if abs(spans[k, 0] - lo) < self.tau and abs(spans[k, 1] - hi) < self.tau:
+                    best_j = min(best_j, d)
+        return best_j, best_s
 
 
 # ---------------------------------------------------------------- verification

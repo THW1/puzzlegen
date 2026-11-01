@@ -484,9 +484,12 @@ near-fits.
 
 ### 7.4 Optimiser (`connectors/__init__.py`, `pipeline.py`)
 1. Joints are processed shortest first (fewest feasible shapes).
-2. For each joint, 8 random candidates (tab and/or swirl) are drawn and ordered by
-   distance to the most similar connector already placed (capped at τ). The first
-   feasible candidate is taken.
+2. For each joint, 8 random candidates (tab and/or swirl) are drawn and ranked by
+   distance to the most similar connector already placed (capped at τ): first among
+   connectors whose joints would also end at the same points when mated (the
+   joint-level criterion), then among all. The first feasible candidate is taken.
+   Ranking by the joint-level criterion first fixed most grid failures in the M2
+   stress test, because grids have many joints of nearly equal length.
 3. Repair loop: one connector of each **joint-level** ambiguous pair is re-drawn,
    followed by a new verification. This stops after 10 rounds or `max_iter` re-draws.
    Shape-only pairs are not chased: beyond the alphabet's capacity re-drawing cannot

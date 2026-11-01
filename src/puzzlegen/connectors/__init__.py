@@ -5,9 +5,12 @@
 # Decisions:   Feasibility is checked against the faces' *current* boundaries (curves
 #              decorated earlier), so earlier connectors are respected automatically.
 #              Greedy distinctness instead of a quantised alphabet: for each joint K
-#              random candidates are drawn, ordered by their distance to the most similar
-#              connector already placed (uniqueness.side_profiles, capped at tau), and
-#              the first feasible one is taken. Joints are processed shortest first,
+#              random candidates are drawn and ordered by distance to the most similar
+#              connector already placed (capped at tau) - first among connectors whose
+#              joints would also end at the same points (the joint-level criterion that
+#              verify() fails on; added after grids with equal joint lengths kept
+#              joint-level ambiguities), then among all. The first feasible one is
+#              taken. Joints are processed shortest first,
 #              because short joints have the fewest feasible shapes.
 #              Tab parameter space is wide on purpose (tilt up to +-25°, neck height
 #              0.3-0.9 r): with the M1 ranges only about 10 tab shapes were
@@ -100,9 +103,9 @@ def _place(m: PlanarMap, c: int, cfg: Config, rng: np.random.Generator, alpha: A
             if spec is None:
                 continue
             pts = to_world(_local(spec, length), a, b, spec.side)
-            score = alpha.score(c, side_profiles(pts, spec, a, b)) if k > 1 else 0.0
-            cands.append((-score, len(cands), spec, pts))
-        for _, _, spec, pts in sorted(cands, key=lambda x: x[:2]):
+            sj, ss = alpha.score(c, side_profiles(pts, spec, a, b)) if k > 1 else (0.0, 0.0)
+            cands.append((-sj, -ss, len(cands), spec, pts))
+        for *_, spec, pts in sorted(cands, key=lambda x: x[:3]):
             if _feasible(m, c, spec, pts, cfg):
                 m.curve_pts[c] = pts
                 m.curve_spec[c] = spec

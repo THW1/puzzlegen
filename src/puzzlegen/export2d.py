@@ -48,8 +48,10 @@ def preview_svg(res: Result) -> str:
                 out.append(f'<path id="f{k + 1}" d="{_path(g, top)}" fill-rule="evenodd"/>')
         out.append('</g>')
     out.append('<g id="pieces" stroke="#222" stroke-width="0.3" stroke-linejoin="round">')
+    n_sets = res.cfg["output.color_sets"]
     for i, p in enumerate(res.pieces):
-        hue = (i * 137.508) % 360
+        # One hue per colour set when the pieces are split for multi-colour printing.
+        hue = (res.color_set[i] * 360 / n_sets + 20) % 360 if n_sets > 1 else (i * 137.508) % 360
         out.append(f'<path id="p{i + 1}" d="{_path(p, top)}" '
                    f'fill="hsl({hue:.1f},55%,78%)"/>')
     out.append('</g>')

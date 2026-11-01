@@ -223,6 +223,7 @@ constructed (§6.2).
 | `plate_gap` | float | `3.0` | ≥ 0 | Gap between parts on a plate |
 | `per_piece` | bool | `false` | — | Also write one STL per piece |
 | `preview` | bool | `true` | — | Write a coloured SVG preview of the assembled puzzle |
+| `color_sets` | int | `1` | 1–16 | Split the pieces randomly into this many sets of (almost) equal size, one group of plate files per set (`<name>_set<k>_plate<j>.stl`), e.g. to print each set in its own colour. The split is seeded (reproducible) and does not change the puzzle itself; the preview colours pieces by set and the report lists each piece's set |
 
 ---
 
@@ -231,6 +232,7 @@ constructed (§6.2).
 | File | Content |
 |------|---------|
 | `<name>_plate<k>.stl` / `.3mf` | Packed pieces for print bed k |
+| `<name>_set<k>_plate<j>.stl` | With `output.color_sets` > 1: plate j of colour set k |
 | `<name>_frame<k>.stl` | Frame segment k |
 | `<name>_piece<id>.stl` | Single pieces (`output.per_piece`) |
 | `<name>_cut.svg` / `.dxf` | Cut paths: layers `cut`, `frame`, `engrave` (laser mode: each shared edge once) |

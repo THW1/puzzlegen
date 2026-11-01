@@ -198,6 +198,7 @@ SCHEMA: dict[str, tuple[Any, Callable[[str, Any], Any]]] = {
     "output.plate_gap": (3.0, _num(float, 0)),
     "output.per_piece": (False, _bool),
     "output.preview": (True, _bool),
+    "output.color_sets": (1, _num(int, 1, 16)),
 }
 
 _SECTIONS = {k.rsplit(".", 1)[0] for k in SCHEMA if "." in k}

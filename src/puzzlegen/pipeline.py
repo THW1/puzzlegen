@@ -42,6 +42,7 @@ class Result:
     fab: Fabricated                # clearance-offset outlines + printability issues
     frame: Frame | None
     uniqueness: dict
+    color_set: list[int]           # colour set of each piece (output.color_sets)
 
 
 def run(cfg: Config) -> Result:
@@ -66,7 +67,21 @@ def run(cfg: Config) -> Result:
     pieces = [pmap.face_polygon(f) for f in pmap.inner_faces()]
     return Result(cfg, region, pmap, pieces, stats, checks.partition(pieces, region),
                   interlock.joint_report(pmap, cfg["connectors.lock_margin"]), cleanup_stats,
-                  fabricate(pieces, cfg), make_frame(region, cfg), ver)
+                  fabricate(pieces, cfg), make_frame(region, cfg), ver,
+                  color_sets(len(pieces), cfg["output.color_sets"], cfg["seed"]))
+
+
+def color_sets(n: int, k: int, seed: int) -> list[int]:
+    """Random, balanced split of n pieces into k sets (sizes differ by at most one).
+    Uses its own random stream, so changing output.color_sets never changes the puzzle.
+    Plain random split on purpose: neighbours may share a set (a map colouring with
+    four colours was judged overkill)."""
+    if k <= 1:
+        return [0] * n
+    rng = np.random.default_rng([seed, 0xC0105E7])
+    sets = np.empty(n, dtype=int)
+    sets[rng.permutation(n)] = np.arange(n) % k
+    return sets.tolist()
 
 
 REPAIR_ROUNDS = 10   # verification passes in the repair loop (each costs a full verify)

@@ -103,7 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         (out / f"{name}_preview.svg").write_text(export2d.preview_svg(res))
     if "stl" in formats:
         from . import export3d
-        report.add_export(rep, export3d.export(res.fab.outlines, res.frame, cfg, out, name))
+        report.add_export(rep, export3d.export(res.fab.outlines, res.frame, cfg, out, name,
+                                                   res.color_set))
     (out / f"{name}_report.json").write_text(report.dumps(rep))
     s = rep["stats"]
     print(f"{name}: {s['pieces']} pieces, {s['joints']} joints, "

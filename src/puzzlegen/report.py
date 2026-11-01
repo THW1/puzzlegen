@@ -74,6 +74,9 @@ def build(res: Result) -> dict:
     }
     if res.frame is not None:
         report["stats"]["frame_segments"] = len(res.frame.segments)
+    if res.cfg["output.color_sets"] > 1:
+        report["color_sets"] = {f"set{k + 1}": [i + 1 for i, s in enumerate(res.color_set) if s == k]
+                                for k in range(res.cfg["output.color_sets"])}
     return _round(report)
 
 

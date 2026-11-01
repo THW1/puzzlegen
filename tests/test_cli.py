@@ -56,3 +56,25 @@ def test_require_lock_fails_on_loose_pieces(tmp_path):
 def test_coupon(tmp_path):
     assert main(["coupon", "--out", str(tmp_path), "--clearance", "0.15:0.25:0.05"]) == 0
     assert (tmp_path / "coupon.stl").stat().st_size > 84
+
+
+def test_color_sets_split_pieces_into_balanced_plate_groups(tmp_path):
+    from puzzlegen.pipeline import color_sets
+    sets = color_sets(25, 3, seed=1)
+    assert sorted(set(sets)) == [0, 1, 2]
+    assert max(sets.count(k) for k in range(3)) - min(sets.count(k) for k in range(3)) <= 1
+    assert sets == color_sets(25, 3, seed=1) and color_sets(25, 1, 1) == [0] * 25
+
+    out = tmp_path / "c"
+    assert main(["generate", str(_cfg(tmp_path)), "--out", str(out),
+                 "--set", "output.color_sets=3", "--set", 'frame.style="none"']) == 0
+    for k in (1, 2, 3):
+        assert (out / f"t_set{k}_plate1.stl").stat().st_size > 84
+    assert not (out / "t_plate1.stl").exists()
+    rep = json.loads((out / "t_report.json").read_text())
+    assert sorted(i for v in rep["color_sets"].values() for i in v) == list(range(1, 26))
+    # The split must not change the puzzle itself.
+    ref = tmp_path / "r"
+    main(["preview", str(_cfg(tmp_path)), "--out", str(ref)])
+    rep0 = json.loads((ref / "t_report.json").read_text())
+    assert rep0["stats"]["joint_length"] == rep["stats"]["joint_length"]

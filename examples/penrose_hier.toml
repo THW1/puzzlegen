@@ -1,0 +1,17 @@
+# Penrose supertiles as pieces: jagged outlines made of rhombus edges.
+# Supertile outlines rarely lock by themselves, so tabs are added where needed.
+name = "penrose_hier"
+
+[region]
+shape = "circle"
+size = [200.0, 200.0]
+
+[tiling]
+kind = "penrose"
+target_count = 30
+
+[grouping]
+strategy = "hierarchy"
+
+[connectors]
+placement = "unlocked"

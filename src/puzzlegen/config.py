@@ -198,6 +198,7 @@ SCHEMA: dict[str, tuple[Any, Callable[[str, Any], Any]]] = {
     "output.plate_gap": (3.0, _num(float, 0)),
     "output.per_piece": (False, _bool),
     "output.preview": (True, _bool),
+    "output.color_sets": (1, _num(int, 1, 16)),
 }
 
 _SECTIONS = {k.rsplit(".", 1)[0] for k in SCHEMA if "." in k}
@@ -322,14 +323,14 @@ def _cross_check(v: dict[str, Any]) -> None:
 _IMPLEMENTED: list[tuple[str, Callable[[Any], bool], str]] = [
     ("region.shape", lambda x: x != "svg", "M4"),
     ("region.border", lambda x: x == "clip", "M4"),
-    ("tiling.kind", lambda x: x in ("voronoi", "grid"), "M3/M4"),
+    ("tiling.kind", lambda x: x in ("voronoi", "grid", "penrose"), "M4"),
+    ("tiling.penrose.variant", lambda x: x == "p3", "M6"),
     ("tiling.rotation", lambda x: x == 0, "M6"),
     ("tiling.voronoi.size_spread", lambda x: x == 0, "M6"),
-    ("grouping.strategy", lambda x: x == "identity", "M3"),
+    ("grouping.strategy", lambda x: x != "metatile", "M4"),
     ("connectors.kinds", lambda x: set(x) <= {"tab", "swirl", "none"}, "M6"),
     ("fabrication.mode", lambda x: x == "fdm", "M5"),
-    ("cleanup.split_degree4", lambda x: not x, "M3"),
-    ("connectors.placement", lambda x: x == "all", "M3"),
+    ("cleanup.split_degree4", lambda x: not x, "M6"),
 ]
 
 

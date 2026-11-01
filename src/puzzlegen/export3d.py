@@ -15,7 +15,10 @@
 #              Plates: shelf packing of axis-aligned bounding boxes, largest first.
 #              Frame segments are written one per file (they are usually bed-sized).
 # Invariants:  All solids sit on z = 0 and are manifold (checked into the report).
+#              With output.color_sets > 1 each colour set is packed onto its own
+#              plates (<name>_set<k>_plate<j>.stl).
 # Related:     fabricate.py (piece outlines), frame.py (frame 2D geometry),
+#              pipeline.color_sets (piece -> set),
 #              coupon.py reuses `piece_solid` and `write_stl`.
 # Tests:       tests/test_export3d.py
 # === END CONTEXT ===
@@ -221,7 +224,8 @@ def build_frame(frame) -> list[Part]:
     return parts
 
 
-def export(outlines, frame, cfg: Config, out: Path, name: str) -> dict:
+def export(outlines, frame, cfg: Config, out: Path, name: str,
+           color_set: list[int] | None = None) -> dict:
     pieces, info = build_pieces(outlines, cfg)
     files = []
     if cfg["output.per_piece"]:
@@ -230,11 +234,17 @@ def export(outlines, frame, cfg: Config, out: Path, name: str) -> dict:
             write_stl(f, p.solid)
             files.append(f.name)
     bed = tuple(cfg["output.bed"])
-    plates = pack(pieces, bed, cfg["output.plate_gap"])
-    for k, plate in enumerate(plates, 1):
-        f = out / f"{name}_plate{k}.stl"
-        write_stl(f, mf.Manifold.batch_boolean([p.solid for p in plate], mf.OpType.Add))
-        files.append(f.name)
+    n_sets = max(color_set) + 1 if color_set else 1
+    plates = []
+    for cs in range(n_sets):
+        members = [p for p in pieces
+                   if n_sets == 1 or color_set[int(p.name[len("piece"):]) - 1] == cs]
+        prefix = f"{name}_set{cs + 1}" if n_sets > 1 else name
+        for k, plate in enumerate(pack(members, bed, cfg["output.plate_gap"]), 1):
+            f = out / f"{prefix}_plate{k}.stl"
+            write_stl(f, mf.Manifold.batch_boolean([p.solid for p in plate], mf.OpType.Add))
+            files.append(f.name)
+            plates.append(plate)
     frame_parts = build_frame(frame) if frame is not None else []
     too_big = []
     for p in frame_parts:

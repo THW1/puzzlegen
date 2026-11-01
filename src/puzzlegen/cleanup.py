@@ -1,7 +1,10 @@
 # === CONTEXT ===
-# Purpose:     Edge cleanup (DESIGN 6.3) between tiling and connectors: merge slivers,
-#              straighten degree-2 vertices inside joints, and contract joints too short
-#              to carry a connector. Rule U1 (every joint locks) depends on it.
+# Purpose:     Edge cleanup (DESIGN 6.3) between tiling and connectors: merge slivers
+#              (small, thin, or with a neck below min_neck - added in M3 for clipped
+#              Penrose fragments),
+#              straighten nearly collinear vertices inside joints (bent joints become
+#              chain curves via PlanarMap.from_rings_chained), and contract single-edge
+#              joints too short to carry a connector. Rule U1 (every joint locks) depends on it.
 # Decisions:   Works on (vertex positions, vertex-index rings) and rebuilds the
 #              PlanarMap afterwards (PlanarMap.from_rings). Rejected: in-place half-edge
 #              surgery - merging faces and contracting edges in a DCEL is error-prone,
@@ -37,12 +40,14 @@ from .config import Config
 from .planar_map import PlanarMap
 
 LOCKING_KINDS = {"tab", "dovetail", "tee", "double", "swirl"}
+FRAGILE_LOSS = 0.15   # share of area an opening by min_neck/2 may remove from a cell
 
 
 class _Rings:
-    def __init__(self, verts: np.ndarray, rings: list[list[int]]):
+    def __init__(self, verts: np.ndarray, rings: list[list[int]], tags: list | None = None):
         self.verts = np.array(verts, float)
         self.rings = [list(r) for r in rings]
+        self.tags = list(tags) if tags is not None else [None] * len(self.rings)
 
     def edge_owner(self) -> dict[tuple[int, int], int]:
         out = {}
@@ -65,21 +70,51 @@ class _Rings:
 
 
 def cleanup(m: PlanarMap, cfg: Config) -> tuple[PlanarMap, dict]:
-    R = _Rings(m.verts, m.rings())
+    R = _Rings(m.verts, m.rings(), m.face_tag[1:])
     stats: Counter = Counter()
     min_feat = cfg["fabrication.min_feature"] + cfg["fabrication.clearance"]
-    _merge_slivers(R, cfg["cleanup.min_area_ratio"], min_feat, stats)
-    _straighten(R, stats)
+    min_neck = cfg["fabrication.min_neck"] + cfg["fabrication.clearance"]
     uses_connectors = bool(set(cfg["connectors.kinds"]) & LOCKING_KINDS)
-    threshold = cfg["connectors.min_edge"] if uses_connectors else cfg["cleanup.collapse_edge"]
+    # Pieces narrower than a minimal connector cannot hold a socket or carry a head
+    # (M3: 8 mm strips of clipped Penrose cells along the region edge). Only when the
+    # cells are the final pieces; grouping works with small cells on purpose.
+    min_inscribed = 0.0
+    if uses_connectors and cfg["grouping.strategy"] == "identity":
+        min_inscribed = cfg["connectors.head_size"][0] / 2 + min_neck / 2
+    max_bend = cfg["cleanup.collinear_angle"]
+    _merge_slivers(R, cfg["cleanup.min_area_ratio"], min_feat, min_neck, stats, min_inscribed)
+    _straighten(R, stats, max_bend)
+    # Cells that will be grouped are small on purpose: only tiny edges are contracted.
+    identity = cfg["grouping.strategy"] == "identity"
+    threshold = cfg["connectors.min_edge"] if (uses_connectors and identity) \
+        else cfg["cleanup.collapse_edge"]
     _contract_short(R, threshold, stats)
-    _merge_slivers(R, cfg["cleanup.min_area_ratio"], min_feat, stats)
-    _straighten(R, stats)
-    return PlanarMap.from_rings(R.verts, R.rings), dict(sorted(stats.items()))
+    _merge_slivers(R, cfg["cleanup.min_area_ratio"], min_feat, min_neck, stats, min_inscribed)
+    _straighten(R, stats, max_bend)
+    # Grouping needs the full vertex rings of its cells, so chains only for final pieces.
+    build = PlanarMap.from_rings_chained if identity else PlanarMap.from_rings
+    return build(R.verts, R.rings, R.tags), dict(sorted(stats.items()))
 
 
 # ---------------------------------------------------------------- slivers
-def _merge_slivers(R: _Rings, ratio: float, min_width: float, stats: Counter) -> None:
+def _fragile(p: Polygon, min_width: float, min_neck: float, min_inscribed: float = 0.0) -> bool:
+    """Too thin overall, or the outline itself has a neck below min_neck (it would
+    fail the fabrication neck check before any connector is added)."""
+    if p.buffer(-min_width / 2).is_empty:
+        return True
+    if min_inscribed > 0 and p.buffer(-min_inscribed).is_empty:
+        return True
+    r = 0.99 * min_neck / 2
+    core = p.buffer(-r)
+    if core.is_empty or core.geom_type == "MultiPolygon":
+        return True
+    # A thin wedge or spike vanishes under erosion instead of splitting: the opening
+    # loses a large share of the area (M3: 2 mm corner wedge of a clipped Penrose cell).
+    return p.difference(core.buffer(r)).area > FRAGILE_LOSS * p.area
+
+
+def _merge_slivers(R: _Rings, ratio: float, min_width: float, min_neck: float,
+                   stats: Counter, min_inscribed: float = 0.0) -> None:
     """Merge pieces that are too small or too thin into the neighbour sharing the
     longest boundary, smallest first, until none is left (or none can be merged)."""
     while True:
@@ -87,7 +122,7 @@ def _merge_slivers(R: _Rings, ratio: float, min_width: float, stats: Counter) ->
         med = float(np.median(areas))
         cand = [int(i) for i in np.argsort(areas)
                 if areas[i] < ratio * med
-                or R.poly(R.rings[i]).buffer(-min_width / 2).is_empty]
+                or _fragile(R.poly(R.rings[i]), min_width, min_neck, min_inscribed)]
         owner = R.edge_owner()
         done = False
         for i in cand:
@@ -96,6 +131,7 @@ def _merge_slivers(R: _Rings, ratio: float, min_width: float, stats: Counter) ->
                 if new is not None and R.ok(new):
                     R.rings[j] = new
                     del R.rings[i]
+                    del R.tags[i]          # the absorbing piece keeps its own tag
                     stats["slivers_merged"] += 1
                     done = True
                     break
@@ -146,7 +182,11 @@ def _merge_rings(a: list[int], b: list[int]) -> list[int] | None:
 
 
 # ---------------------------------------------------------------- degree-2 vertices
-def _straighten(R: _Rings, stats: Counter) -> None:
+def _straighten(R: _Rings, stats: Counter, max_bend: float) -> None:
+    """Remove interior vertices shared by two pieces where the joint bends by less than
+    max_bend degrees. Sharper bends stay (they become chain curves): removing them
+    would move a whole triangle of area from one piece to the other (M3: shrank merged
+    Penrose fragments to a fraction of their size)."""
     owner = R.edge_owner()
     boundary = R.boundary_vertices(owner)
     uses: dict[int, list[int]] = defaultdict(list)
@@ -155,6 +195,13 @@ def _straighten(R: _Rings, stats: Counter) -> None:
             uses[v].append(i)
     for v, rs in uses.items():
         if v in boundary or len(rs) != 2:
+            continue
+        r0 = R.rings[rs[0]]
+        k = r0.index(v)
+        a, b, c = R.verts[r0[k - 1]], R.verts[v], R.verts[r0[(k + 1) % len(r0)]]
+        d1, d2 = b - a, c - b
+        bend = abs(np.degrees(np.arctan2(d1[0] * d2[1] - d1[1] * d2[0], d1 @ d2)))
+        if bend > max_bend:
             continue
         new = {i: [x for x in R.rings[i] if x != v] for i in rs}
         if all(R.ok(r) for r in new.values()):
@@ -169,8 +216,12 @@ def _contract_short(R: _Rings, threshold: float, stats: Counter) -> None:
     while True:
         owner = R.edge_owner()
         boundary = R.boundary_vertices(owner)
+        uses = Counter(v for r in R.rings for v in r)
+        # Single-edge joints only: an edge with a bend vertex (used by two pieces) at
+        # either end is part of a longer chain joint and must keep its shape.
         edges = [(float(np.linalg.norm(R.verts[u] - R.verts[v])), u, v)
-                 for (u, v) in owner if u < v and (v, u) in owner]
+                 for (u, v) in owner if u < v and (v, u) in owner
+                 and (uses[u] != 2 or u in boundary) and (uses[v] != 2 or v in boundary)]
         edges = sorted(e for e in edges if e[0] < threshold and (e[1], e[2]) not in skipped)
         if not edges:
             stats["short_joints_left"] = len(skipped)

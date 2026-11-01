@@ -52,8 +52,8 @@ def _parser() -> argparse.ArgumentParser:
 def _list() -> None:
     from .tilings import REGISTRY
     print("tilings (implemented):", ", ".join(sorted(REGISTRY)))
-    print("groupings (implemented): identity")
-    print("connectors (implemented): tab, none")
+    print("groupings (implemented): identity, hierarchy (penrose), grow")
+    print("connectors (implemented): tab, swirl, none; placement: all, unlocked")
     print(f"config keys: {len(SCHEMA)} (see USAGE.md section 3)")
 
 
@@ -103,7 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         (out / f"{name}_preview.svg").write_text(export2d.preview_svg(res))
     if "stl" in formats:
         from . import export3d
-        report.add_export(rep, export3d.export(res.fab.outlines, res.frame, cfg, out, name))
+        report.add_export(rep, export3d.export(res.fab.outlines, res.frame, cfg, out, name,
+                                                   res.color_set))
     (out / f"{name}_report.json").write_text(report.dumps(rep))
     s = rep["stats"]
     print(f"{name}: {s['pieces']} pieces, {s['joints']} joints, "

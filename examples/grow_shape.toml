@@ -1,0 +1,14 @@
+# Pieces grown from small Voronoi cells; a local search makes joints lock by shape.
+# Tabs are added only on joints that do not lock (hybrid).
+name = "grow_shape"
+
+[tiling]
+kind = "voronoi"
+target_count = 30
+
+[grouping]
+strategy = "grow"
+compactness = 0.2
+
+[connectors]
+placement = "unlocked"

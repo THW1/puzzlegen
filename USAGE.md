@@ -120,9 +120,9 @@ defaults, is written to the report.
 #### `[tiling.penrose]`
 | Key | Type | Default | Allowed | Description |
 |-----|------|---------|---------|-------------|
-| `variant` | string | `"p3"` | `p3` (rhombs), `p2` (kites and darts) | Penrose tile set |
+| `variant` | string | `"p3"` | `p3` (rhombs), `p2` (kites and darts) | Penrose tile set. `p2` is not implemented yet (M6) |
 | `start` | string | `"sun"` | `sun`, `triangle` | Starting configuration before subdivision. `sun` gives fivefold symmetry at the centre |
-| `levels` | int or `"auto"` | `"auto"` | ≥ 1 | Number of subdivision steps. Auto picks the value that matches the target count; `grouping.level` then sets the piece level |
+| `levels` | int or `"auto"` | `"auto"` | ≥ 1 | Number of subdivision steps (from the starting sun to the cells). Auto picks the level that matches the target count and then scales the patch to hit it within about 10 % |
 
 #### `[tiling.hat]`
 | Key | Type | Default | Allowed | Description |
@@ -147,7 +147,7 @@ defaults, is written to the report.
 | Key | Type | Default | Allowed | Description |
 |-----|------|---------|---------|-------------|
 | `strategy` | string | `"identity"` | `identity`, `hierarchy`, `grow`, `metatile` | `identity`: 1 cell = 1 piece. `hierarchy`: a piece = all tiles under one supertile (Penrose, hat, spectre only). `grow`: random region growing. `metatile`: hat H/T/P/F clusters |
-| `level` | int or `"auto"` | `"auto"` | ≥ 1, < `tiling.*.levels` | `hierarchy` only: supertile level that becomes a piece |
+| `level` | int or `"auto"` | `"auto"` | ≥ 1 | `hierarchy` only: how many subdivision levels a piece spans (cells per piece ≈ 2.6^level). Auto = 2 (about 7 rhombi per piece) |
 | `cells_per_piece` | float or `"auto"` | `"auto"` | ≥ 1 | `grow` only: mean piece size in cells |
 | `compactness` | float | `0.5` | 0–1 | `grow` only: 1 = round pieces, 0 = tentacle-like pieces (more shape lock, more fragile) |
 
@@ -176,7 +176,7 @@ constructed (§6.2).
 | `double_above` | float | `45.0` | > `min_edge` | Joints longer than this may get a `double` connector, if `double` is in `kinds` |
 | `lock_margin` | float | `20.0` | 0–90 | A joint locks if its tangent direction turns by at least 180° + this many degrees (DESIGN §5.4) |
 | `require_lock` | bool | `false` | — | Fail the run (exit code 2) if any piece has no locking joint (`interlock.loose_pieces`) |
-| `placement` | string | `"all"` | `all`, `unlocked` | `all`: connectors on every joint that fits one. `unlocked`: only on joints that do not already lock by shape (hybrid mode for grouped outlines) |
+| `placement` | string | `"all"` | `all`, `unlocked` | `all`: connectors on every joint that fits one. `unlocked`: only on joints that do not already lock by shape (hybrid mode for grouped outlines); a non-locking bent joint whose segments are too short is straightened and gets the connector on its chord |
 
 ### 3.7 `[uniqueness]` (§7)
 | Key | Type | Default | Allowed | Description |
@@ -223,6 +223,7 @@ constructed (§6.2).
 | `plate_gap` | float | `3.0` | ≥ 0 | Gap between parts on a plate |
 | `per_piece` | bool | `false` | — | Also write one STL per piece |
 | `preview` | bool | `true` | — | Write a coloured SVG preview of the assembled puzzle |
+| `color_sets` | int | `1` | 1–16 | Split the pieces randomly into this many sets of (almost) equal size, one group of plate files per set (`<name>_set<k>_plate<j>.stl`), e.g. to print each set in its own colour. The split is seeded (reproducible) and does not change the puzzle itself; the preview colours pieces by set and the report lists each piece's set |
 
 ---
 
@@ -231,6 +232,7 @@ constructed (§6.2).
 | File | Content |
 |------|---------|
 | `<name>_plate<k>.stl` / `.3mf` | Packed pieces for print bed k |
+| `<name>_set<k>_plate<j>.stl` | With `output.color_sets` > 1: plate j of colour set k |
 | `<name>_frame<k>.stl` | Frame segment k |
 | `<name>_piece<id>.stl` | Single pieces (`output.per_piece`) |
 | `<name>_cut.svg` / `.dxf` | Cut paths: layers `cut`, `frame`, `engrave` (laser mode: each shared edge once) |
@@ -255,20 +257,27 @@ target_count = 40
 lloyd = 2
 ```
 
-**Penrose, pieces made of supertiles (jagged, shape-locking outlines):**
+**Penrose rhombi with tabs:**
+```toml
+name = "penrose"
+[tiling]
+kind = "penrose"
+target_count = 100
+```
+
+**Penrose, pieces made of supertiles (jagged outlines, tabs only where needed):**
 ```toml
 name = "penrose_hier"
 [region]
 shape = "circle"
 size = [200, 200]
-border = "natural"
 [tiling]
 kind = "penrose"
-target_count = 60
+target_count = 30
 [grouping]
-strategy = "hierarchy"
+strategy = "hierarchy"      # level = 2 (default): about 7 rhombi per piece
 [connectors]
-kinds = ["tab", "tee"]      # extra locks on long joints; makes uniqueness constructive
+placement = "unlocked"      # supertile outlines rarely lock by themselves
 ```
 
 **Hats in a heart-shaped frame with matching border:**
@@ -295,7 +304,7 @@ kind = "spectre"
 target_count = 80
 ```
 
-**Connector-free, locking by shape (`swirl` works since M2; lock-aware `grow` follows in M3):**
+**Connector-free, locking by shape (`swirl` since M2, lock-aware `grow` since M3):**
 ```toml
 [tiling]
 kind = "voronoi"
@@ -342,6 +351,8 @@ formats = ["svg", "dxf"]
 | `ambiguous_pairs > 0` (joint-level) | Add connector kinds (`["tab", "swirl"]`), widen `head_size`, raise `max_iter`, or lower `target_count` |
 | `guarantee = "joint-level"` instead of `"strict"` | Normal above ~25 pieces (limited number of distinguishable tab shapes, DESIGN §7.2). For `strict`: fewer pieces, wider `head_size`, or mixed kinds |
 | Many `skipped_infeasible` with `swirl` | Joints too short: raise `connectors.min_edge` to about 22 and lower `target_count` |
+| Loose pieces or ambiguity with `grouping.strategy = "grow"` and `kinds = ["none"]` | Pure shape lock leaves about half of all joints unlocked; use `connectors.placement = "unlocked"` with `kinds = ["tab"]` (hybrid), or lower `grouping.compactness` for more arms |
+| Slow runs (≥ 30 s) on Penrose | All Penrose joints have the same length, so the repair loop works hard; lower `uniqueness.max_iter` or `target_count` |
 | Joint-level ambiguity on `grid` tilings | Grid joints have almost equal lengths, so more of them are comparable: raise `tiling.grid.jitter` (0.3 fixed all stress-test cases) or widen `head_size` |
 | `mate_graph_components > 1`, many `skipped_infeasible` | Pieces too small for tabs (below ~18 mm): lower `target_count`, or reduce `head_size`, `min_wall` and `min_neck` together |
 | `interlock.unlocked > 0` | Some joints have no connector (see `connectors.skipped_infeasible`): lower `min_wall`/`head_size` or raise `min_edge`; for shape-locked groupings, add `tab` to `kinds` |

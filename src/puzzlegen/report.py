@@ -28,6 +28,17 @@ def _round(x):
     return x
 
 
+def _final_connectors(m, interior: list[int], stats) -> dict:
+    out: dict = {}
+    for c in interior:
+        spec = m.curve_spec[c]
+        k = spec.kind if spec is not None else "no_connector"
+        out[k] = out.get(k, 0) + 1
+    if stats.get("redrawn"):
+        out["redrawn"] = stats["redrawn"]
+    return dict(sorted(out.items()))
+
+
 def build(res: Result) -> dict:
     areas = np.array([p.area for p in res.pieces])
     m = res.pmap
@@ -49,7 +60,8 @@ def build(res: Result) -> dict:
             "joints": len(interior),
             "joint_length": {"min": float(lengths.min()), "median": float(np.median(lengths)),
                              "max": float(lengths.max())},
-            "connectors": dict(sorted(res.connector_stats.items())),
+            # Final state (placement counters include re-draws, so they are not used).
+            "connectors": _final_connectors(m, interior, res.connector_stats),
             "cleanup": res.cleanup,
             "min_tab_neck_width": min((t.neck_width for t in tabs), default=None),
         },
@@ -62,6 +74,9 @@ def build(res: Result) -> dict:
     }
     if res.frame is not None:
         report["stats"]["frame_segments"] = len(res.frame.segments)
+    if res.cfg["output.color_sets"] > 1:
+        report["color_sets"] = {f"set{k + 1}": [i + 1 for i, s in enumerate(res.color_set) if s == k]
+                                for k in range(res.cfg["output.color_sets"])}
     return _round(report)
 
 

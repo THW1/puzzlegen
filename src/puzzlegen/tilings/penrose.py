@@ -112,7 +112,10 @@ def generate(region: Polygon, n: int, rng: np.random.Generator, cfg: Config) -> 
     shift = cmath.rect(rng.uniform(0, 0.3 * r_cover), rng.uniform(0, 2 * math.pi))
     center = complex(cx, cy) + shift
     angle = rng.uniform(0, 2 * math.pi)
-    r0 = (r_cover + abs(shift)) * 1.05
+    # The sun is a decagon: its inscribed radius is cos(18°) = 0.951 of its corner
+    # radius, so that factor must be divided out (M3: a 5 % margin alone left a
+    # 0.27 mm^2 gap at the region edge for one seed).
+    r0 = (r_cover + abs(shift)) / math.cos(math.pi / 10) * 1.02
 
     # Piece level: first level whose rhombi inside the region reach the target.
     fixed = cfg["tiling.penrose.levels"]

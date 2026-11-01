@@ -66,3 +66,16 @@ def test_penrose_puzzle_passes_checks():
     res = pipeline.run(build({"tiling.kind": "penrose", "tiling.target_count": 40, "seed": 0}))
     assert res.partition["ok"] and res.uniqueness["ok"]
     assert not res.interlock["loose_pieces"]
+
+
+def test_patch_always_covers_region():
+    """The sun is a decagon (inscribed radius cos 18° of its corner radius); a too
+    small patch left a 0.27 mm^2 gap at the region edge for one seed (M3)."""
+    for seed in range(6):
+        for shape in ("circle", "rect"):
+            cfg = build({"tiling.kind": "penrose", "tiling.target_count": 30, "seed": seed,
+                         "region.shape": shape, "region.size": [200.0, 200.0]})
+            region = make_region(cfg)
+            m = penrose.generate(region, 30, np.random.default_rng(seed), cfg)
+            res = checks.partition([m.face_polygon(f) for f in m.inner_faces()], region)
+            assert res["ok"], (seed, shape, res)

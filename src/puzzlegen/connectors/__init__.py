@@ -19,13 +19,14 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 
 import numpy as np
 from shapely.geometry import Polygon
 
 from ..config import Config
 from ..planar_map import PlanarMap
-from .tab import TabSpec, local_polyline, to_world
+from .tab import TabSpec, keyhole, local_polyline, to_world
 
 SHRINK = 0.85        # head radius factor per retry
 MIN_HEAD_FRAC = 0.6  # retries stop below this fraction of the minimum head size
@@ -65,10 +66,11 @@ def _place(m: PlanarMap, c: int, cfg: Config, rng: np.random.Generator) -> str:
         while rr >= rmin * MIN_HEAD_FRAC:
             neck = max(ratio * rr, min_half_neck)
             if neck < 0.9 * rr:
-                half = rr * (1 + abs(skew)) + margin   # head extent from its centre
-                if length > 2 * half:
-                    t = rng.uniform(half / length, 1 - half / length)
-                    spec = TabSpec(side, t, rr, neck, max(0.5, 0.3 * rr), skew)
+                spec = TabSpec(side, 0.0, rr, neck, max(0.5, 0.3 * rr), skew)
+                k = keyhole(spec)                         # extent around the neck base
+                lo, hi = margin - k[:, 0].min(), length - margin - k[:, 0].max()
+                if lo < hi:
+                    spec = replace(spec, t=rng.uniform(lo, hi) / length)
                     pts = to_world(local_polyline(spec, length), a, b, side)
                     if _feasible(m, c, side, pts, cfg["connectors.min_wall"]):
                         m.curve_pts[c] = pts

@@ -5,13 +5,17 @@
 #              min_neck check and, later, the uniqueness signatures (DESIGN 7.3)
 #              analytic. Rejected for now: free Bezier tabs (prettier, but neck width is
 #              only known by measuring the curve).
-#              `skew` shifts the head sideways, so a tab differs from its mirror image
-#              (flip prevention, DESIGN 7.5).
+#              `skew` TILTS the whole keyhole (neck and head) about the neck base, so a
+#              tab differs from its mirror image (flip prevention, DESIGN 7.5). Rejected:
+#              shifting only the head sideways - that slants both neck sides and makes
+#              the perpendicular neck width smaller than 2*neck (found by the M1 neck
+#              check).
 #              Shape in absolute mm; only the position t is relative to the chord
 #              (DESIGN 5).
 # Invariants:  Local frame: x along the chord from 0 to L, head on +y. The polyline starts
 #              at (0, 0) and ends at (L, 0). neck < r, so the head undercuts the neck
-#              (that is what locks).
+#              (that is what locks). The perpendicular neck width is exactly 2*neck for
+#              any tilt; |tilt| <= MAX_TILT keeps both neck base points below the head.
 # Limitations: Sharp corners where the neck meets the chord and the head; rounding comes
 #              with the fabrication offsets in M1 (fabrication.corner_radius).
 # === END CONTEXT ===
@@ -23,6 +27,7 @@ from dataclasses import dataclass
 import numpy as np
 
 ARC_POINTS = 32
+MAX_TILT = math.radians(25)   # tilt at skew = +-1; config skew is within +-0.3
 
 
 @dataclass(frozen=True)
@@ -32,7 +37,7 @@ class TabSpec:
     r: float         # head radius, mm
     neck: float      # neck half-width, mm (< r)
     neck_h: float    # straight neck height before the head, mm
-    skew: float      # sideways head shift, as a fraction of r
+    skew: float      # keyhole tilt, as a fraction of MAX_TILT (sign = direction)
 
     kind = "tab"
 
@@ -46,22 +51,33 @@ class TabSpec:
 
     @property
     def depth(self) -> float:
-        return self.neck_h + math.sqrt(self.r ** 2 - self.neck ** 2) + self.r
+        return float(keyhole(self)[:, 1].max())
+
+
+def keyhole(spec: TabSpec) -> np.ndarray:
+    """Neck + head polyline, neck base centred at x = 0 on the chord (y = 0)."""
+    n, r, hn = spec.neck, spec.r, spec.neck_h
+    h = math.sqrt(r * r - n * n)
+    # Upright keyhole in (u, v): neck sides u = -n / +n from the chord up to v = hn,
+    # head circle centred at (0, hn + h). Arc clockwise over the top.
+    a0 = math.atan2(-h, -n) + 2 * math.pi
+    a1 = math.atan2(-h, n)
+    ang = np.linspace(a0, a1, ARC_POINTS)
+    arc = np.column_stack([r * np.cos(ang), hn + h + r * np.sin(ang)])
+    al = spec.skew * MAX_TILT
+    ca, sa = math.cos(al), math.sin(al)
+    # Neck sides extended to the chord: rotated point (u, v) has y = u*sa + v*ca = 0.
+    base_l = np.array([-n, n * sa / ca])
+    base_r = np.array([n, -n * sa / ca])
+    uv = np.vstack([base_l, arc, base_r])
+    return np.column_stack([uv[:, 0] * ca - uv[:, 1] * sa, uv[:, 0] * sa + uv[:, 1] * ca])
 
 
 def local_polyline(spec: TabSpec, length: float) -> np.ndarray:
     """Tab polyline from (0, 0) to (length, 0), head on +y."""
-    c = spec.t * length
-    dx = spec.skew * spec.r
-    n, r, hn = spec.neck, spec.r, spec.neck_h
-    h = math.sqrt(r * r - n * n)
-    cx, cy = c + dx, hn + h
-    # Arc over the top, clockwise from the left neck point to the right neck point.
-    a0 = math.atan2(-h, -n) + 2 * math.pi
-    a1 = math.atan2(-h, n)
-    ang = np.linspace(a0, a1, ARC_POINTS)
-    arc = np.column_stack([cx + r * np.cos(ang), cy + r * np.sin(ang)])
-    return np.vstack([[0.0, 0.0], [c - n, 0.0], arc, [c + n, 0.0], [length, 0.0]])
+    k = keyhole(spec) + np.array([spec.t * length, 0.0])
+    k[0, 1] = k[-1, 1] = 0.0   # exactly on the chord
+    return np.vstack([[0.0, 0.0], k, [length, 0.0]])
 
 
 def to_world(local: np.ndarray, a: np.ndarray, b: np.ndarray, side: int) -> np.ndarray:

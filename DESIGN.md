@@ -249,6 +249,7 @@ class ConnectorSpec:
 | `tab` | Classic jigsaw knob: Bézier neck plus round head | Yes (neck < head) | Default. Parametrised by neck width, head radius, skew, asymmetry and wobble |
 | `dovetail` | Trapezoid | Yes | Good for laser-cut wood; also used for frame segments |
 | `tee` / `hook` | T or L shapes | Yes | High uniqueness entropy |
+| `swirl` | S-curve along the whole joint, two hooking lobes | Yes (sweep ≥ 180° + margin) | Connector-free look; see §5.4 |
 | `wave` | Sine or spline wiggle with no neck | **No** | Decoration only. Pair with locking edges |
 | `double` | Two small tabs, opposite sides | Yes, strong | For long edges |
 | `none` | Straight | No | Short edges, or frame edges if desired |
@@ -278,6 +279,75 @@ class ConnectorSpec:
 
 These defaults are engineering starting points, not measured values. Section 11 adds a
 calibration coupon generator to measure them per printer and material.
+
+### 5.4 Shape-locked (connector-free) puzzles
+Goal: pieces that hold together by their outline alone, with no visible knobs. The
+outline itself has to interlock.
+
+**Lock criterion** (implemented in `interlock.py`). Consider one joint between pieces A
+and B on its own. B can slide away from A in direction d exactly when the joint curve
+is a graph over the axis perpendicular to d. That holds when every line parallel to d
+crosses the curve at most once, which is the case when all tangent directions of the
+curve lie in an open half-plane. Hence:
+
+> A joint **locks** iff its unwrapped tangent angle sweeps at least 180°.
+
+If any line parallel to d crosses the curve twice, B is blocked in both +d and −d. So
+a sweep of at least 180° blocks every direction. A margin is added
+(`connectors.lock_margin`, default 20°), so that the overhang survives the clearance
+gap. Examples:
+
+| Joint shape | Sweep | Locks? |
+|-------------|-------|--------|
+| Straight edge, or any convex polygon edge | 0° | no |
+| Semicircular bump (no undercut) | 180° | no (limit case) |
+| Keyhole tab | ≈ 290° | yes |
+| Swirl (below), lobes of 110° each | 220° | yes |
+
+Consequence: tiles bounded by straight edges (Voronoi, Penrose, hats) never lock
+across a single edge. Shape-lock needs either curved joints or grouped outlines.
+
+**Three ways to get shape-lock:**
+
+1. **Swirl joints** (`connectors.kinds = ["swirl"]`, planned for M2). Every joint is
+   replaced along most of its length by a smooth S-curve with two hooking lobes, one
+   into each piece. The result looks organic, Escher-like, with no distinct knob.
+   Construction: prescribe the turning function θ(u) along a window of the joint
+   (θ₊ · sin 2πu for the first lobe, θ₋ for the second), integrate the unit tangent,
+   then rotate and scale the curve so it ends exactly at the joint's far vertex. The
+   curve is smooth by construction, and its sweep is θ₊ + θ₋ (≥ 200° by default).
+   Parameters: lobe angles (100–125°), window length (50–80 % of the joint), window
+   position, and asymmetry θ₊ ≠ θ₋. Asymmetry also makes the swirl differ from its
+   mirror image.
+   Feasibility: the curve stays inside the union of both faces, keeps `min_wall` to
+   all other boundaries, and its throats pass the `min_neck` erosion check
+   (`fabricate.py`).
+   Uniqueness: the signature is the whole curve profile. The parameter alphabet is
+   richer than for tabs, but the curve comes closer to the joint's end vertices, so
+   rule U3 (no composite sockets) needs `end_margin` here too.
+2. **Grouped outlines** (`grouping = grow | hierarchy | metatile`, with
+   `connectors.kinds = ["none"]`). Pieces are unions of many small cells (fine hex or
+   triangle grids, Voronoi, Penrose rhombi, hats). Their jagged boundaries overhang
+   where a neighbour's cells reach around a corner.
+   Locking is not automatic, so the `grow` strategy gets a **lock objective**: when a
+   piece chooses its next cell, it prefers cells that create an overhang into a
+   neighbour (the joint sweep increases), and it rejects groupings that leave a piece
+   without any locked joint.
+   For `hierarchy`/`metatile`, candidate supertile levels are scored by their locked
+   fraction, and the best level is chosen.
+3. **Hybrid**: shape-lock where it happens, and tabs only on joints that do not lock by
+   shape (`connectors.placement = "unlocked"`, planned for M3). This keeps knobs rare.
+
+**Requirement for every mode:** each piece needs at least one locked joint. Pieces
+without one are reported as `interlock.loose_pieces`. With
+`connectors.require_lock = true` they are a failed check (exit code 2).
+
+**Limits**:
+- The criterion tests each joint on its own. Two non-locking joints between the same
+  pair of pieces can lock together; the sampled translation test of §7.3 covers that
+  case.
+- The angle margin only approximates "the overhang is deep enough". A later refinement
+  measures the overhang depth directly and requires at least k × clearance.
 
 ---
 
@@ -388,14 +458,15 @@ conservative, because a real person *will* force a near-fit.
   width) with a KD-tree makes the comparison near-linear.
 - **Verifier output**: a sparse head × socket compatibility table, a list of
   ambiguous pairs with their distance, and interlock status per joint.
-- **Interlock (pairwise separation) test**: for each joint (A, B), test whether B can
-  translate by a distance larger than the connector depth in some direction
-  (sampled over 0–360°, 5° steps), considering *only A*, without intersecting A.
-  The test uses the un-offset outlines, because clearance always allows tiny motions.
-  A joint is **locked** if no direction is free. (Testing a piece against all its
-  neighbours at once is meaningless: an interior piece is always blocked in every
-  direction.) Joints that are not locked are reported. They are fatal only where the
-  config requires connectors.
+- **Interlock (pairwise separation) test**: can B slide away from A, considering
+  *only A*? (Testing a piece against all its neighbours at once is meaningless: an
+  interior piece is always blocked in every direction.) For a single joint this is
+  decided analytically by the turning criterion of §5.4 (implemented since M1). If a
+  pair of pieces shares several joints, a sampled test is used instead: translate B
+  by more than the connector depth in directions sampled over 0–360° (5° steps), using
+  the un-offset outlines, because clearance always allows tiny motions. Unlocked
+  joints and loose pieces are reported; they are fatal only with
+  `connectors.require_lock`.
 - **Optional exact solver** (small N ≤ ~30, for test and debug only): backtracking
   over frame cavity positions, using the compatibility table as the candidate
   generator.
@@ -505,7 +576,7 @@ puzzlegen/
       __init__.py       # ConnectorSpec, registry, feasibility zone
       tab.py  dovetail.py  tee.py  wave.py
     uniqueness.py       # signatures, compatibility index, optimiser, small exact solver
-    interlock.py        # direction-blocking test
+    interlock.py        # pairwise lock test (turning criterion, §5.4)
     fabricate.py        # clearance offset, checks, piece outlines, frame
     export2d.py         # SVG, DXF, shared-edge paths
     export3d.py         # manifold3d extrusion, chamfers, IDs, packing, STL/3MF
@@ -607,12 +678,12 @@ Full option reference: [`USAGE.md`](USAGE.md).
 | M | Scope | Exit criterion |
 |---|-------|----------------|
 | M0 | Skeleton: config, `PlanarMap`, rect region, grid + Voronoi, `identity`, `tab` connector, SVG preview | Valid partition property tests pass |
-| M1 | Fabrication: clearance, checks, extrusion → STL, frame (clip mode), report | Printed 20-piece puzzle fits |
-| M2 | Cleanup (short edges and short joints, slivers; U1 depends on it) + uniqueness: signatures, verifier, optimiser, small exact solver, flip handling | 0 ambiguous pairs on 100-piece Voronoi; exact solver confirms N = 20 |
-| M3 | Penrose P2/P3 with ancestry; `hierarchy` grouping; collinear-run merge | 100-piece Penrose passes M2 checks |
+| M1 | Fabrication: clearance, checks, extrusion → STL, frame (clip mode), coupon, convex region shapes, interlock report | Printed 20-piece puzzle fits |
+| M2 | Cleanup (short edges and short joints, slivers; U1 depends on it) + uniqueness: signatures, verifier, optimiser, small exact solver, flip handling; `swirl` joints (§5.4) | 0 ambiguous pairs on 100-piece Voronoi; exact solver confirms N = 20 |
+| M3 | Penrose P2/P3 with ancestry; `hierarchy` and `grow` grouping with lock objective (§5.4); `connectors.placement = "unlocked"`; collinear-run merge | 100-piece Penrose passes M2 checks |
 | M4 | Hat (Tile(a,b)) and Spectre; `metatile` grouping; natural border + frame connectors | Hat puzzle in heart-shaped frame passes all checks |
 | M5 | Laser/plotter: shared-edge cut paths, DXF, kerf | Cut test in 3 mm plywood |
-| M6 | Plate packing, 3MF, IDs, coupon command, density images, more connectors | — |
+| M6 | 3MF, density images, tiling rotation, more connectors | — |
 
 ---
 

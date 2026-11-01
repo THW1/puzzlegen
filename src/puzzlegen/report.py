@@ -14,7 +14,7 @@ import numpy as np
 import scipy
 import shapely
 
-from . import __version__
+from . import __version__, fabricate
 from .pipeline import Result
 
 
@@ -51,8 +51,14 @@ def build(res: Result) -> dict:
             "connectors": dict(sorted(res.connector_stats.items())),
             "min_neck_width": min((t.neck_width for t in tabs), default=None),
         },
-        "checks": {"partition": res.partition},
+        "checks": {"partition": res.partition,
+                   "fabrication": fabricate.check_result(res.fab),
+                   "interlock": {**res.interlock,
+                                 "ok": not (res.cfg["connectors.require_lock"]
+                                            and res.interlock["loose_pieces"])}},
     }
+    if res.frame is not None:
+        report["stats"]["frame_segments"] = len(res.frame.segments)
     return _round(report)
 
 
@@ -62,3 +68,7 @@ def dumps(report: dict) -> str:
 
 def checks_ok(report: dict) -> bool:
     return all(v.get("ok", True) for v in report["checks"].values())
+
+
+def add_export(report: dict, export_info: dict) -> None:
+    report["checks"]["mesh"] = _round(export_info)

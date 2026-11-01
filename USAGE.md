@@ -1,8 +1,10 @@
 # puzzlegen — Usage and Options Reference
 
-> **Status: specification.** No code exists yet. This document defines the planned
-> command-line interface and configuration options. The implementation follows it,
-> and both are updated together whenever an option changes. The design rationale is in
+> **Status: specification, partly implemented.** This document defines the command-line
+> interface and configuration options. Options of milestones not reached yet are
+> accepted by the parser but rejected with a message naming the milestone; the README
+> lists what works today. Code and this document are updated together whenever an
+> option changes. The design rationale is in
 > [`DESIGN.md`](DESIGN.md); section numbers (§) below refer to it.
 
 All lengths are in **mm**, all angles in **degrees**.
@@ -165,13 +167,16 @@ constructed (§6.2).
 ### 3.6 `[connectors]` (§5)
 | Key | Type | Default | Allowed | Description |
 |-----|------|---------|---------|-------------|
-| `kinds` | list | `["tab"]` | `tab`, `dovetail`, `tee`, `double`, `wave`, `none` | Connector kinds the optimiser may use. More kinds = more distinct signatures. `wave` and `none` do not lock |
+| `kinds` | list | `["tab"]` | `tab`, `dovetail`, `tee`, `double`, `swirl`, `wave`, `none` | Connector kinds the optimiser may use. More kinds = more distinct signatures. `swirl` replaces the whole joint with an S-curve that locks by shape (connector-free look, DESIGN §5.4). `wave` and `none` do not lock |
 | `head_size` | [min, max] | `[5.0, 8.0]` | > 0 | Range of head widths |
 | `neck_ratio` | [min, max] | `[0.55, 0.75]` | 0.3–0.9 | Neck width / head width. Smaller = stronger lock, weaker neck |
 | `min_edge` | float | `12.0` | > 0 | Joints shorter than this get no connector. Cleanup tries to remove them |
 | `end_margin` | float | `3.0` | ≥ 0 | Minimum distance of a connector from the joint's end vertices |
-| `min_wall` | float | `2.0` | ≥ `fabrication.min_feature` | Minimum material between a connector and other edges of the piece |
+| `min_wall` | float | `3.5` | ≥ `fabrication.min_neck` + `fabrication.clearance` | Minimum material between a connector and other edges of the piece. This wall is a link like a neck, so it must still be ≥ `min_neck` after the clearance offset |
 | `double_above` | float | `45.0` | > `min_edge` | Joints longer than this may get a `double` connector, if `double` is in `kinds` |
+| `lock_margin` | float | `20.0` | 0–90 | A joint locks if its tangent direction turns by at least 180° + this many degrees (DESIGN §5.4) |
+| `require_lock` | bool | `false` | — | Fail the run (exit code 2) if any piece has no locking joint (`interlock.loose_pieces`) |
+| `placement` | string | `"all"` | `all`, `unlocked` | `all`: connectors on every joint that fits one. `unlocked`: only on joints that do not already lock by shape (hybrid mode for grouped outlines) |
 
 ### 3.7 `[uniqueness]` (§7)
 | Key | Type | Default | Allowed | Description |
@@ -288,6 +293,31 @@ connectors = true
 [tiling]
 kind = "spectre"
 target_count = 80
+```
+
+**Connector-free, locking by shape (planned: `swirl` in M2, lock-aware `grow` in M3):**
+```toml
+[tiling]
+kind = "voronoi"
+target_count = 40
+[connectors]
+kinds = ["swirl"]          # organic S-shaped joints, no knobs
+require_lock = true        # every piece must hook into a neighbour
+```
+or, with jagged outlines made of many small cells:
+```toml
+[tiling]
+kind = "grid"
+target_count = 60          # pieces
+[tiling.grid]
+cell = "hex"
+[grouping]
+strategy = "grow"
+cells_per_piece = 12
+compactness = 0.2          # low = more arms and overhangs
+[connectors]
+kinds = ["none"]           # pure shape lock; or kinds = ["tab"] with
+require_lock = true        # placement = "unlocked": tabs only where shape does not lock
 ```
 
 **Laser-cut plywood (3 mm):**

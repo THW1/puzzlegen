@@ -48,7 +48,7 @@ def test_set_override_parsing(tmp_path):
 
 def test_not_implemented_options_rejected():
     with pytest.raises(ConfigError, match="not implemented yet"):
-        check_implemented(build({"tiling.kind": "penrose"}))
+        check_implemented(build({"tiling.kind": "hat"}))
     check_implemented(build({}))
 
 

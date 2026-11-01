@@ -8,9 +8,11 @@ from puzzlegen.region import make_region
 from puzzlegen.tilings import REGISTRY
 
 
-def _interior_lengths(m):
-    return [float(np.linalg.norm(np.diff(m.curve_pts[c], axis=0)))
-            for c in range(len(m.curve_he)) if m.is_interior_curve(c)]
+def _interior_lengths(m, single_edge_only=False):
+    """Polyline length of each interior joint (chains: sum of segments)."""
+    return [float(np.linalg.norm(np.diff(m.curve_pts[c], axis=0), axis=1).sum())
+            for c in range(len(m.curve_he)) if m.is_interior_curve(c)
+            and (not single_edge_only or len(m.curve_pts[c]) == 2)]
 
 
 @pytest.mark.parametrize("extra", [
@@ -27,7 +29,8 @@ def test_cleanup_keeps_partition_and_removes_short_joints(extra, seed):
     m2, stats = cleanup(m, cfg)
     m2.check()
     assert checks.partition([m2.face_polygon(f) for f in m2.inner_faces()], region)["ok"]
-    short = [x for x in _interior_lengths(m2) if x < cfg["connectors.min_edge"]]
+    # Only single-edge joints are contracted; bent (chain) joints keep their shape.
+    short = [x for x in _interior_lengths(m2, True) if x < cfg["connectors.min_edge"]]
     assert len(short) == stats.get("short_joints_left", 0)
     assert stats.get("slivers_unmergeable", 0) == 0
 

@@ -38,6 +38,7 @@ class TabSpec:
     neck: float      # neck half-width, mm (< r)
     neck_h: float    # straight neck height before the head, mm
     skew: float      # keyhole tilt, as a fraction of MAX_TILT (sign = direction)
+    offset: int = 0  # index of the chain segment carrying the tab (0 for straight joints)
 
     kind = "tab"
 
@@ -51,8 +52,9 @@ class TabSpec:
 
     def profile_range(self, n_pts: int) -> tuple[int, int]:
         """Index range of the connector itself in the curve polyline (neck base to neck
-        base); used by uniqueness.profiles."""
-        return 1, n_pts - 1
+        base); used by uniqueness.profiles. On a chain joint the tab sits in segment
+        `offset`, so the range starts after the chain vertices before it."""
+        return self.offset + 1, self.offset + 1 + ARC_POINTS + 2
 
     @property
     def depth(self) -> float:

@@ -61,7 +61,9 @@ def side_profiles(pts: np.ndarray, spec, a: np.ndarray, b: np.ndarray) -> list[t
     i0, i1 = spec.profile_range(len(pts))
     seg = pts[i0:i1]
     o = (seg[0] + seg[-1]) / 2
-    ex = (b - a) / np.linalg.norm(b - a)
+    # Frame from the connector's own base (on chain joints the carrying segment is not
+    # parallel to a->b); it runs in the canonical a->b sense.
+    ex = (seg[-1] - seg[0]) / np.linalg.norm(seg[-1] - seg[0])
     out = []
     for xdir in (ex, -ex):
         nout = np.array([xdir[1], -xdir[0]])

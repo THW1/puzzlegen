@@ -21,8 +21,8 @@
 #              edge (true for clipped Voronoi cells and grids of a rect region).
 # Tests:       tests/test_planar_map.py, tests/test_partition.py
 # Limitations: No regions with holes yet (outside face would need several cycles).
-#              Joints are single edges; edge chains (DESIGN 2.0 "joint") come with
-#              grouping in M3.
+#              After grouping, a joint can be a chain: one curve whose polyline runs
+#              through the former cell vertices (from_rings `paths`).
 # === END CONTEXT ===
 from __future__ import annotations
 
@@ -49,11 +49,14 @@ class PlanarMap:
     curve_he: list[int] = field(default_factory=list)    # curve -> canonical half-edge
     curve_pts: list[np.ndarray] = field(default_factory=list)  # curve -> (m, 2) polyline
     curve_spec: list[object] = field(default_factory=list)     # curve -> connector spec
+    face_tag: list[object] = field(default_factory=list)       # face -> tiling data or None
 
     # ------------------------------------------------------------ construction
     @classmethod
-    def from_polygons(cls, polygons: list[np.ndarray], snap: float = 1e-6) -> "PlanarMap":
-        """Build a map from cell polygons (each an (k, 2) array, open ring)."""
+    def from_polygons(cls, polygons: list[np.ndarray], snap: float = 1e-6,
+                      tags: list | None = None) -> "PlanarMap":
+        """Build a map from cell polygons (each an (k, 2) array, open ring). `tags`
+        (one per polygon, e.g. Penrose ancestry) end up in face_tag."""
         pts = np.concatenate([np.asarray(p, float) for p in polygons])
         ids = _cluster(pts, snap)
         uniq, inv = np.unique(ids, return_inverse=True)
@@ -63,20 +66,25 @@ class PlanarMap:
         for p in polygons:
             rings.append([int(v) for v in inv[k:k + len(p)]])
             k += len(p)
-        return cls.from_rings(verts, rings)
+        return cls.from_rings(verts, rings, tags)
 
     @classmethod
-    def from_rings(cls, verts: np.ndarray, rings: list[list[int]]) -> "PlanarMap":
+    def from_rings(cls, verts: np.ndarray, rings: list[list[int]], tags: list | None = None,
+                   paths: dict[tuple[int, int], np.ndarray] | None = None) -> "PlanarMap":
         """Build a map from vertex positions and cell rings (vertex indices). Unused
-        vertices are dropped, collapsed vertices removed, rings oriented CCW."""
+        vertices are dropped, collapsed vertices removed, rings oriented CCW.
+        `paths` maps a directed vertex pair (u, v) of a ring to the polyline of that
+        edge (chain curves after grouping); missing pairs get a straight curve."""
         clean: list[list[int]] = []
-        for ring in rings:
-            ring = [v for i, v in enumerate(ring) if v != ring[i - 1]]  # drop collapsed
+        clean_tags: list = []
+        for i, ring in enumerate(rings):
+            ring = [v for k, v in enumerate(ring) if v != ring[k - 1]]  # drop collapsed
             if len(ring) < 3:
                 continue
             if _signed_area(verts[ring]) < 0:
                 ring = ring[::-1]
             clean.append(ring)
+            clean_tags.append(tags[i] if tags is not None else None)
         used = sorted({v for r in clean for v in r})
         new_id = {v: i for i, v in enumerate(used)}
         verts = np.asarray(verts, float)[used]
@@ -85,6 +93,7 @@ class PlanarMap:
         m = cls(verts=verts)
         m.face_edge.append(-1)
         m.face_kind.append("outside")
+        m.face_tag = [None] + clean_tags
         by_ends: dict[tuple[int, int], int] = {}
         for ring in rings:
             f = len(m.face_edge)
@@ -119,14 +128,63 @@ class PlanarMap:
             m.next[o], m.prev[nxt] = nxt, o
         m.face_edge[OUTSIDE] = next(iter(boundary_from.values()))
 
+        inv_id = {i: v for v, i in new_id.items()}
         for h in range(len(m.origin)):
             if h < m.twin[h]:
                 c = len(m.curve_he)
                 m.curve_he.append(h)
-                m.curve_pts.append(verts[[m.origin[h], m.origin[m.twin[h]]]].copy())
+                u, v = m.origin[h], m.origin[m.twin[h]]
+                path = None
+                if paths:
+                    path = paths.get((inv_id[u], inv_id[v]))
+                    if path is None and (inv_id[v], inv_id[u]) in paths:
+                        path = paths[(inv_id[v], inv_id[u])][::-1]
+                m.curve_pts.append(np.array(path, float) if path is not None
+                                   else verts[[u, v]].copy())
                 m.curve_spec.append(None)
                 m.curve[h] = m.curve[m.twin[h]] = c
         return m
+
+    @classmethod
+    def from_rings_chained(cls, verts: np.ndarray, rings: list[list[int]],
+                           tags: list | None = None) -> "PlanarMap":
+        """Like from_rings, but interior vertices shared by exactly two rings (bends
+        inside a joint) are not map vertices: the joint becomes one chain curve whose
+        polyline runs through them. Every ring keeps at least 3 junctions (vertices
+        are promoted if needed, e.g. for a piece enclosed by a single neighbour)."""
+        verts = np.asarray(verts, float)
+        users: dict[int, int] = {}
+        owner: set[tuple[int, int]] = set()
+        for r in rings:
+            for k, v in enumerate(r):
+                users[v] = users.get(v, 0) + 1
+                owner.add((v, r[(k + 1) % len(r)]))
+        boundary = {u for (u, v) in owner if (v, u) not in owner}
+        junction = {v for v, n in users.items() if n != 2 or v in boundary}
+        changed = True
+        while changed:
+            changed = False
+            for r in rings:
+                js = [v for v in r if v in junction]
+                if len(js) < 3:
+                    step = max(1, len(r) // 3)
+                    junction.update(r[::step][:3])
+                    changed = True
+        new_rings, paths = [], {}
+        for r in rings:
+            n = len(r)
+            start = next(k for k, v in enumerate(r) if v in junction)
+            seq = [r[(start + k) % n] for k in range(n)] + [r[start]]
+            ring, path = [], [seq[0]]
+            for v in seq[1:]:
+                path.append(v)
+                if v in junction:
+                    ring.append(path[0])
+                    if len(path) > 2:
+                        paths[(path[0], path[-1])] = verts[path]
+                    path = [v]
+            new_rings.append(ring)
+        return cls.from_rings(verts, new_rings, tags, paths)
 
     def _add_he(self, origin: int, face: int) -> int:
         self.origin.append(origin)

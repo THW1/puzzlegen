@@ -64,7 +64,8 @@ REPAIR_ROUNDS = 10   # verification passes in the repair loop (each costs a full
 def _verify_and_repair(pmap: PlanarMap, region: Polygon, cfg: Config,
                        rng: np.random.Generator, alpha, stats: Counter) -> dict:
     """Re-draw one connector of every joint-level ambiguous pair until none is left or
-    uniqueness.max_iter re-draws are used up, then verify (DESIGN 7.4).
+    uniqueness.max_iter re-draws are used up; drop connectors of pairs that remain
+    (see _drop_ambiguous); then verify (DESIGN 7.4).
     Strict (shape-only) pairs are not chased: placement already maximises shape
     distinctness, and beyond the shape alphabet's capacity (about 60 tabs at the
     default head sizes) re-drawing cannot remove them (measured in M2: 85 pairs left
@@ -89,9 +90,41 @@ def _verify_and_repair(pmap: PlanarMap, region: Polygon, cfg: Config,
                 continue
             kind = connectors.redo(pmap, c, cfg, rng, alpha)
             stats["redrawn"] += 1
-            if kind == "skipped_infeasible":
-                stats["lost_in_redraw"] += 1
+            if kind == "kept_old":
+                stats["redraw_kept_old"] += 1
             redraws += 1
+    if v.joint:
+        dropped = _drop_ambiguous(pmap, v.joint, cfg["connectors.lock_margin"], alpha)
+        stats["dropped_ambiguous"] += dropped
     pieces = [pmap.face_polygon(f) for f in pmap.inner_faces()]
     v = uniqueness.verify(pmap, pieces, region, tau, flip, cfg["uniqueness.exact_solver"])
     return {**v.report(), "redraws": redraws}
+
+
+def _drop_ambiguous(pmap: PlanarMap, pairs, margin: float, alpha) -> int:
+    """Last resort after re-drawing: straighten one joint of each remaining joint-level
+    ambiguous pair, if that adds no mate-graph component and leaves no piece without a
+    locking joint that had one. A plain joint cannot be confused with another; the pieces stay held by
+    their other joints. Added in M3: Penrose joints all have the same length, so the
+    tab alphabet alone cannot separate them."""
+    dropped = 0
+    comps0, _ = uniqueness._mate_graph(pmap)
+    loose0 = set(interlock.joint_report(pmap, margin)["loose_pieces"])
+    for c_a, c_b, _ in pairs:
+        for c in (c_b, c_a):
+            spec, pts = pmap.curve_spec[c], pmap.curve_pts[c]
+            if spec is None:
+                break                            # pair already resolved
+            h = pmap.curve_he[c]
+            pmap.curve_spec[c] = None
+            pmap.curve_pts[c] = connectors.strip(pts, spec)
+            faces = (pmap.face[h], pmap.face[pmap.twin[h]])
+            locked = interlock.joint_report(pmap, margin)
+            comps, _ = uniqueness._mate_graph(pmap)
+            # Must not make things worse: no new mate-graph component, no new loose piece.
+            if comps <= comps0 and not (set(faces) & set(locked["loose_pieces"])) - loose0:
+                alpha.remove(c)
+                dropped += 1
+                break
+            pmap.curve_spec[c], pmap.curve_pts[c] = spec, pts   # undo
+    return dropped

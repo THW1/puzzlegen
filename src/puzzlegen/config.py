@@ -322,7 +322,8 @@ def _cross_check(v: dict[str, Any]) -> None:
 _IMPLEMENTED: list[tuple[str, Callable[[Any], bool], str]] = [
     ("region.shape", lambda x: x != "svg", "M4"),
     ("region.border", lambda x: x == "clip", "M4"),
-    ("tiling.kind", lambda x: x in ("voronoi", "grid"), "M3/M4"),
+    ("tiling.kind", lambda x: x in ("voronoi", "grid", "penrose"), "M4"),
+    ("tiling.penrose.variant", lambda x: x == "p3", "M6"),
     ("tiling.rotation", lambda x: x == 0, "M6"),
     ("tiling.voronoi.size_spread", lambda x: x == 0, "M6"),
     ("grouping.strategy", lambda x: x == "identity", "M3"),

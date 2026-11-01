@@ -142,8 +142,9 @@ Generators register via a simple registry dict (no plugin framework). Each gener
 must return a map that covers `region.buffer(margin)`.
 
 ### 4.1 Voronoi (first implementation, simplest and most flexible)
-- **Seeds**: Poisson-disk (Bridson) for even piece sizes, or uniform random for a
-  chaotic look. Density can be modulated by a grey-scale image or a function, so
+- **Seeds**: blue noise for even piece sizes (Mitchell's best-candidate sampling: it
+  yields exactly N points, whereas Bridson's Poisson-disk method fixes a radius and the
+  count varies), or uniform random for a chaotic look. Density can be modulated by a grey-scale image or a function, so
   piece size varies across the puzzle (a difficulty gradient).
 - **Lloyd relaxation**, 0–k iterations: a regularity knob that runs from chaotic to
   honeycomb-like.

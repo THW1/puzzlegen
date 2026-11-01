@@ -1,0 +1,12 @@
+# Classic Voronoi puzzle in a rectangle (USAGE.md section 5, first recipe).
+name = "voronoi_rect"
+
+[region]
+size = [180, 130]
+
+[tiling]
+kind = "voronoi"
+target_count = 40
+
+[tiling.voronoi]
+lloyd = 2

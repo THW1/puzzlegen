@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "puzzlegen"
+version = "0.0.1"
+description = "Irregular interlocking puzzles from planar tilings, for 3D printing and cutting"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "shapely>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "hypothesis>=6"]
+
+[project.scripts]
+puzzlegen = "puzzlegen.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

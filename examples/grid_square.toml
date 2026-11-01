@@ -1,0 +1,9 @@
+# Jittered square grid: the classic jigsaw baseline.
+name = "grid_square"
+
+[tiling]
+kind = "grid"
+target_count = 48
+
+[tiling.grid]
+jitter = 0.15

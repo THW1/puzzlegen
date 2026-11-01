@@ -607,8 +607,8 @@ Full option reference: [`USAGE.md`](USAGE.md).
 |---|-------|----------------|
 | M0 | Skeleton: config, `PlanarMap`, rect region, grid + Voronoi, `identity`, `tab` connector, SVG preview | Valid partition property tests pass |
 | M1 | Fabrication: clearance, checks, extrusion → STL, frame (clip mode), report | Printed 20-piece puzzle fits |
-| M2 | Uniqueness: signatures, verifier, optimiser, small exact solver, flip handling | 0 ambiguous pairs on 100-piece Voronoi; exact solver confirms N = 20 |
-| M3 | Penrose P2/P3 with ancestry; `hierarchy` grouping; cleanup | 100-piece Penrose passes M2 checks |
+| M2 | Cleanup (short edges and short joints, slivers; U1 depends on it) + uniqueness: signatures, verifier, optimiser, small exact solver, flip handling | 0 ambiguous pairs on 100-piece Voronoi; exact solver confirms N = 20 |
+| M3 | Penrose P2/P3 with ancestry; `hierarchy` grouping; collinear-run merge | 100-piece Penrose passes M2 checks |
 | M4 | Hat (Tile(a,b)) and Spectre; `metatile` grouping; natural border + frame connectors | Hat puzzle in heart-shaped frame passes all checks |
 | M5 | Laser/plotter: shared-edge cut paths, DXF, kerf | Cut test in 3 mm plywood |
 | M6 | Plate packing, 3MF, IDs, coupon command, density images, more connectors | — |

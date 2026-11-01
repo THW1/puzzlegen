@@ -35,7 +35,8 @@ def build(res: Result) -> dict:
     lengths = np.array([np.linalg.norm(m.verts[m.origin[m.curve_he[c]]]
                                        - m.verts[m.origin[m.twin[m.curve_he[c]]]])
                         for c in interior])
-    tabs = [m.curve_spec[c] for c in interior if m.curve_spec[c] is not None]
+    tabs = [m.curve_spec[c] for c in interior
+            if m.curve_spec[c] is not None and m.curve_spec[c].kind == "tab"]
     report = {
         "version": __version__,
         "versions": {"python": platform.python_version(), "numpy": np.__version__,
@@ -49,10 +50,12 @@ def build(res: Result) -> dict:
             "joint_length": {"min": float(lengths.min()), "median": float(np.median(lengths)),
                              "max": float(lengths.max())},
             "connectors": dict(sorted(res.connector_stats.items())),
-            "min_neck_width": min((t.neck_width for t in tabs), default=None),
+            "cleanup": res.cleanup,
+            "min_tab_neck_width": min((t.neck_width for t in tabs), default=None),
         },
         "checks": {"partition": res.partition,
                    "fabrication": fabricate.check_result(res.fab),
+                   "uniqueness": res.uniqueness,
                    "interlock": {**res.interlock,
                                  "ok": not (res.cfg["connectors.require_lock"]
                                             and res.interlock["loose_pieces"])}},

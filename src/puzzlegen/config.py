@@ -151,7 +151,7 @@ SCHEMA: dict[str, tuple[Any, Callable[[str, Any], Any]]] = {
     "cleanup.collinear_angle": (5.0, _num(float, 0, 30)),
     "cleanup.collapse_edge": (2.0, _num(float, 0)),
     "cleanup.min_area_ratio": (0.35, _num(float, 0, 1)),
-    "cleanup.split_degree4": (True, _bool),
+    "cleanup.split_degree4": (False, _bool),
 
     "connectors.kinds": (["tab"], _list_of("tab", "dovetail", "tee", "double", "swirl",
                                             "wave", "none")),
@@ -326,8 +326,9 @@ _IMPLEMENTED: list[tuple[str, Callable[[Any], bool], str]] = [
     ("tiling.rotation", lambda x: x == 0, "M6"),
     ("tiling.voronoi.size_spread", lambda x: x == 0, "M6"),
     ("grouping.strategy", lambda x: x == "identity", "M3"),
-    ("connectors.kinds", lambda x: set(x) <= {"tab", "none"}, "M2"),
+    ("connectors.kinds", lambda x: set(x) <= {"tab", "swirl", "none"}, "M6"),
     ("fabrication.mode", lambda x: x == "fdm", "M5"),
+    ("cleanup.split_degree4", lambda x: not x, "M3"),
     ("connectors.placement", lambda x: x == "all", "M3"),
 ]
 

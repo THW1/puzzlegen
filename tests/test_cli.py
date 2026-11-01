@@ -32,7 +32,7 @@ def test_output_is_reproducible(tmp_path):
 def test_exit_codes(tmp_path):
     assert main(["preview", str(_cfg(tmp_path, "[tiling]\nkind = 'nope'\n"))]) == 1
     assert main(["generate", str(_cfg(tmp_path)), "--set", 'output.formats=["dxf"]']) == 1
-    assert main(["verify", str(_cfg(tmp_path))]) == 1             # M2
+    assert main(["verify", str(_cfg(tmp_path))]) == 0
     assert main(["coupon", "--clearance", "0.3:0.1:0.05"]) == 1
     assert main(["list"]) == 0
 

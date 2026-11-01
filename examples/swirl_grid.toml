@@ -1,0 +1,12 @@
+# Connector-free look: organic S-shaped (swirl) joints on a jittered grid.
+# Swirls need joints of about 22 mm or more, so the pieces are larger.
+name = "swirl_grid"
+
+[tiling]
+kind = "grid"
+target_count = 24
+
+[connectors]
+kinds = ["swirl"]
+min_edge = 22.0
+require_lock = true

@@ -38,7 +38,8 @@ def _puzzle(seed=3, **extra):
     rng = np.random.default_rng(seed)
     region = make_region(cfg)
     m = REGISTRY[cfg["tiling.kind"]](region, 40, rng, cfg)
-    return cfg, m, connectors.assign(m, cfg, rng)
+    stats, _ = connectors.assign(m, cfg, rng)
+    return cfg, m, stats
 
 
 def test_min_wall_and_min_neck_hold():
@@ -77,3 +78,27 @@ def test_same_seed_same_result():
     _, m2, _ = _puzzle(seed=7)
     assert all(np.array_equal(a, b) for a, b in zip(m1.curve_pts, m2.curve_pts))
     assert not math.isnan(m1.verts.sum())
+
+
+def test_swirl_geometry_locks_and_is_simple():
+    import math
+    from shapely.geometry import LineString
+    from puzzlegen.connectors.swirl import SwirlSpec, window_curve
+    from puzzlegen.interlock import turning_sweep
+    s = SwirlSpec(1, 0.5, 20.0, math.radians(105), math.radians(110), math.radians(100))
+    w = window_curve(s)
+    assert tuple(w[0]) == (0.0, 0.0) and tuple(w[-1]) == (20.0, 0.0)
+    assert LineString(w).is_simple
+    assert abs(math.degrees(turning_sweep(w)) - math.degrees(s.sweep)) < 3
+    assert w[:, 1].max() > 3 and w[:, 1].min() < -3          # one lobe into each piece
+
+
+def test_swirl_puzzle_locks_and_keeps_neck():
+    from puzzlegen import pipeline
+    from puzzlegen.fabricate import check_result
+    cfg = build({"seed": 2, "tiling.kind": "grid", "tiling.target_count": 20,
+                 "connectors.kinds": ["swirl"], "connectors.min_edge": 22.0})
+    res = pipeline.run(cfg)
+    assert res.connector_stats["swirl"] > 0
+    assert check_result(res.fab)["ok"]
+    assert res.interlock["locked"] == res.connector_stats["swirl"]

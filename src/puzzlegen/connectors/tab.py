@@ -49,6 +49,11 @@ class TabSpec:
     def neck_width(self) -> float:
         return 2 * self.neck
 
+    def profile_range(self, n_pts: int) -> tuple[int, int]:
+        """Index range of the connector itself in the curve polyline (neck base to neck
+        base); used by uniqueness.profiles."""
+        return 1, n_pts - 1
+
     @property
     def depth(self) -> float:
         return float(keyhole(self)[:, 1].max())

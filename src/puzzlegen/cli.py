@@ -3,8 +3,8 @@
 # Decisions:   argparse, no click/typer dependency (DESIGN 10.2).
 #              All USAGE subcommands exist from the start; those not implemented yet exit
 #              with code 1 and name the milestone, so the CLI surface never changes shape.
-#              Implemented: `generate` (SVG, STL), `preview` (SVG + report), `coupon`,
-#              `list`. `verify` arrives in M2, 3MF in M6, DXF in M5.
+#              Implemented: `generate` (SVG, STL), `preview` (SVG + report), `verify`
+#              (prints the checks, writes nothing), `coupon`, `list`. 3MF in M6, DXF in M5.
 # Invariants:  Exit codes: 0 ok, 1 config error, 2 checks failed, 3 internal error
 #              (USAGE 2.3).
 # Related:     config.load, pipeline.run, export2d.preview_svg, report.build.
@@ -20,7 +20,7 @@ from pathlib import Path
 from . import __version__
 from .config import SCHEMA, ConfigError, load
 
-NOT_YET = {"verify": "M2"}
+NOT_YET: dict[str, str] = {}
 FORMAT_MILESTONE = {"3mf": "M6", "dxf": "M5"}
 
 
@@ -86,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
                 + '; use `preview` or --set output.formats=\'["svg"]\'')
         from . import export2d, pipeline, report
         res = pipeline.run(cfg)
+        if args.command == "verify":
+            return _print_verify(report.build(res))
     except ConfigError as e:
         print(f"puzzlegen: config error: {e}", file=sys.stderr)
         return 1
@@ -111,6 +113,27 @@ def main(argv: list[str] | None = None) -> int:
         print("puzzlegen: checks failed, see report 'checks'", file=sys.stderr)
         return 2
     return 0
+
+
+def _print_verify(rep: dict) -> int:
+    from . import report
+    u, il = rep["checks"]["uniqueness"], rep["checks"]["interlock"]
+    print(f"pieces {rep['stats']['pieces']}, joints {rep['stats']['joints']}, "
+          f"connectors {rep['stats']['connectors']}")
+    if u.get("skipped"):
+        print("uniqueness: skipped (uniqueness.enabled = false)")
+    else:
+        print(f"uniqueness: {'OK' if u['ok'] else 'FAILED'} (guarantee: {u['guarantee']}); "
+              f"joint-level ambiguous pairs {len(u['ambiguous_pairs'])}, "
+              f"shape-compatible pairs {len(u['shape_compatible_pairs'])}, "
+              f"mate-graph components {u['mate_graph_components']}")
+        if u["exact_solver"]:
+            print(f"exact solver: {u['exact_solver']}")
+    print(f"interlock: {il['locked']}/{il['joints']} joints lock, "
+          f"loose pieces {il['loose_pieces']}")
+    for name, c in rep["checks"].items():
+        print(f"check {name}: {'ok' if c.get('ok', True) else 'FAILED'}")
+    return 0 if report.checks_ok(rep) else 2
 
 
 def _coupon(args) -> int:

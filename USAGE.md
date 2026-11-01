@@ -40,7 +40,7 @@ a tray frame. Output goes to `out/first_*`.
 |---------|---------|
 | `puzzlegen generate CONFIG` | Full pipeline: geometry, checks, all requested outputs, report |
 | `puzzlegen preview CONFIG` | Runs up to the verifier and writes only the SVG preview and report (no 3D) |
-| `puzzlegen verify CONFIG` | Runs up to the verifier and prints the uniqueness and interlock results; writes no geometry |
+| `puzzlegen verify CONFIG` | Runs up to the verifier and prints the uniqueness, interlock and other check results; writes no files. Exit code 0 or 2 |
 | `puzzlegen coupon` | Writes a fit-test strip: one head/socket pair per clearance value |
 | `puzzlegen list` | Lists the available tilings, groupings and connector kinds |
 
@@ -50,7 +50,7 @@ a tray frame. Output goes to `out/first_*`.
 | `--seed N` | Override `seed` from the config |
 | `--set KEY=VALUE` | Override any config value; repeatable. KEY is dotted: `--set tiling.target_count=200 --set frame.style=ring`. VALUE is parsed as TOML (`--set output.formats='["svg"]'`) |
 | `--out DIR` | Output directory (overrides `out_dir`) |
-| `--allow-ambiguous` | Write outputs even if the uniqueness check fails (same as `uniqueness.allow_ambiguous = true`) |
+| `--allow-ambiguous` | Same as `uniqueness.allow_ambiguous = true`. Outputs are always written; the exit code stays 2 if a check fails |
 | `-v`, `-vv` | More log output (to stderr) |
 
 ### 2.2 Options for `coupon`
@@ -160,9 +160,9 @@ constructed (§6.2).
 | Key | Type | Default | Allowed | Description |
 |-----|------|---------|---------|-------------|
 | `collinear_angle` | float | `5.0` | 0–30 | Consecutive edges between the same two pieces that bend less than this are merged into one curve |
-| `collapse_edge` | float | `2.0` | ≥ 0 | Edges shorter than this are contracted to a vertex |
+| `collapse_edge` | float | `2.0` | ≥ 0 | Joints shorter than this are contracted to a point when no connectors are used (shape-locked modes). With connectors, `connectors.min_edge` is the threshold instead, so every remaining joint can carry one |
 | `min_area_ratio` | float | `0.35` | 0–1 | Pieces smaller than this × median area are merged into a neighbour |
-| `split_degree4` | bool | `true` | — | Perturb vertices where 4+ pieces meet into degree-3 vertices |
+| `split_degree4` | bool | `false` | — | Split vertices where 4+ pieces meet into degree-3 vertices (for grids and Penrose; planned for M3). Contracting short joints creates such vertices on purpose |
 
 ### 3.6 `[connectors]` (§5)
 | Key | Type | Default | Allowed | Description |
@@ -170,7 +170,7 @@ constructed (§6.2).
 | `kinds` | list | `["tab"]` | `tab`, `dovetail`, `tee`, `double`, `swirl`, `wave`, `none` | Connector kinds the optimiser may use. More kinds = more distinct signatures. `swirl` replaces the whole joint with an S-curve that locks by shape (connector-free look, DESIGN §5.4). `wave` and `none` do not lock |
 | `head_size` | [min, max] | `[5.0, 8.0]` | > 0 | Range of head widths |
 | `neck_ratio` | [min, max] | `[0.55, 0.75]` | 0.3–0.9 | Neck width / head width. Smaller = stronger lock, weaker neck |
-| `min_edge` | float | `12.0` | > 0 | Joints shorter than this get no connector. Cleanup tries to remove them |
+| `min_edge` | float | `12.0` | > 0 | Joints shorter than this get no connector. Cleanup contracts them to a point, so the two pieces then touch only at a corner |
 | `end_margin` | float | `3.0` | ≥ 0 | Minimum distance of a connector from the joint's end vertices |
 | `min_wall` | float | `3.5` | ≥ `fabrication.min_neck` + `fabrication.clearance` | Minimum material between a connector and other edges of the piece. This wall is a link like a neck, so it must still be ≥ `min_neck` after the clearance offset |
 | `double_above` | float | `45.0` | > `min_edge` | Joints longer than this may get a `double` connector, if `double` is in `kinds` |
@@ -181,12 +181,12 @@ constructed (§6.2).
 ### 3.7 `[uniqueness]` (§7)
 | Key | Type | Default | Allowed | Description |
 |-----|------|---------|---------|-------------|
-| `enabled` | bool | `true` | — | Run the optimiser and the verifier. `false` assigns connectors randomly |
-| `tolerance_k` | float | `3.0` | ≥ 1 | Signatures closer than `tolerance_k × clearance` count as interchangeable |
+| `enabled` | bool | `true` | — | Run the optimiser and the verifier. `false` places connectors randomly and skips the check |
+| `tolerance_k` | float | `3.0` | ≥ 1 | Connector shapes closer than `tolerance_k × clearance` (Hausdorff distance) count as interchangeable |
 | `flippable` | bool | `false` | — | Also compare mirrored signatures. Needed if pieces carry no top marking |
-| `max_iter` | int | `2000` | ≥ 0 | Optimiser repair iterations |
-| `exact_solver` | string | `"auto"` | `auto`, `always`, `never` | Backtracking cross-check. `auto` runs it when there are ≤ 30 pieces |
-| `allow_ambiguous` | bool | `false` | — | Write outputs even if ambiguous pairs remain (exit code is still 2) |
+| `max_iter` | int | `2000` | ≥ 0 | Maximum connector re-draws in the repair loop (at most 10 verification rounds) |
+| `exact_solver` | string | `"auto"` | `auto`, `always`, `never` | Backtracking cross-check that counts assemblies (up to 2). `auto` runs it when there are ≤ 30 pieces |
+| `allow_ambiguous` | bool | `false` | — | Kept for compatibility: outputs are always written, and the exit code is still 2 if ambiguous pairs remain |
 
 ### 3.8 `[fabrication]` (§5.3, §8)
 | Key | Type | Default | Allowed | Description |
@@ -295,13 +295,14 @@ kind = "spectre"
 target_count = 80
 ```
 
-**Connector-free, locking by shape (planned: `swirl` in M2, lock-aware `grow` in M3):**
+**Connector-free, locking by shape (`swirl` works since M2; lock-aware `grow` follows in M3):**
 ```toml
 [tiling]
 kind = "voronoi"
-target_count = 40
+target_count = 20          # swirls need larger pieces
 [connectors]
 kinds = ["swirl"]          # organic S-shaped joints, no knobs
+min_edge = 22.0            # swirls need joints >= ~22 mm for 3 mm throats
 require_lock = true        # every piece must hook into a neighbour
 ```
 or, with jagged outlines made of many small cells:
@@ -338,8 +339,10 @@ formats = ["svg", "dxf"]
 
 | Symptom (report / exit code 2) | What to change |
 |--------------------------------|----------------|
-| `ambiguous_pairs > 0` | Add connector kinds, widen `head_size`, raise `max_iter`, or lower `target_count` |
-| `unlocked_joints > 0` | Lower `connectors.min_edge` or `neck_ratio`; for shape-locked groupings, add `tab` to `kinds` |
+| `ambiguous_pairs > 0` (joint-level) | Add connector kinds (`["tab", "swirl"]`), widen `head_size`, raise `max_iter`, or lower `target_count` |
+| `guarantee = "joint-level"` instead of `"strict"` | Normal above ~25 pieces (limited number of distinguishable tab shapes, DESIGN §7.2). For `strict`: fewer pieces, wider `head_size`, or mixed kinds |
+| Many `skipped_infeasible` with `swirl` | Joints too short: raise `connectors.min_edge` to about 22 and lower `target_count` |
+| `interlock.unlocked > 0` | Some joints have no connector (see `connectors.skipped_infeasible`): lower `min_wall`/`head_size` or raise `min_edge`; for shape-locked groupings, add `tab` to `kinds` |
 | `min_neck` violations | Larger pieces (`target_count` ↓), smaller `clearance`, or larger `head_size` |
 | Many slivers along the border | `border = "natural"` or raise `cleanup.min_area_ratio` |
 | Pieces too loose or too tight | Re-run `coupon` and adjust `clearance` |

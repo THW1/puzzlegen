@@ -563,7 +563,6 @@ puzzlegen coupon   --clearance 0.15:0.35:0.05   # printable fit-test strip
 | Very irregular Voronoi pieces with acute corners are fragile | Lloyd iterations ≥ 1 by default; minimum-angle check; corner rounding |
 | Licensing of reference code (Kaplan's apps etc.) | Implement independently from the papers unless the licence allows porting |
 | **Open:** should frame connectors be on by default? | Proposal: yes in `natural` mode, optional in `clip` |
-| **Open:** separate repository vs. folder | Currently a folder in `orchid-pot` (see `README.md`); can be split out with history |
 
 ---
 

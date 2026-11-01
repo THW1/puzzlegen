@@ -142,8 +142,9 @@ Generators register via a simple registry dict (no plugin framework). Each gener
 must return a map that covers `region.buffer(margin)`.
 
 ### 4.1 Voronoi (first implementation, simplest and most flexible)
-- **Seeds**: Poisson-disk (Bridson) for even piece sizes, or uniform random for a
-  chaotic look. Density can be modulated by a grey-scale image or a function, so
+- **Seeds**: blue noise for even piece sizes (Mitchell's best-candidate sampling: it
+  yields exactly N points, whereas Bridson's Poisson-disk method fixes a radius and the
+  count varies), or uniform random for a chaotic look. Density can be modulated by a grey-scale image or a function, so
   piece size varies across the puzzle (a difficulty gradient).
 - **Lloyd relaxation**, 0–k iterations: a regularity knob that runs from chaotic to
   honeycomb-like.
@@ -607,8 +608,8 @@ Full option reference: [`USAGE.md`](USAGE.md).
 |---|-------|----------------|
 | M0 | Skeleton: config, `PlanarMap`, rect region, grid + Voronoi, `identity`, `tab` connector, SVG preview | Valid partition property tests pass |
 | M1 | Fabrication: clearance, checks, extrusion → STL, frame (clip mode), report | Printed 20-piece puzzle fits |
-| M2 | Uniqueness: signatures, verifier, optimiser, small exact solver, flip handling | 0 ambiguous pairs on 100-piece Voronoi; exact solver confirms N = 20 |
-| M3 | Penrose P2/P3 with ancestry; `hierarchy` grouping; cleanup | 100-piece Penrose passes M2 checks |
+| M2 | Cleanup (short edges and short joints, slivers; U1 depends on it) + uniqueness: signatures, verifier, optimiser, small exact solver, flip handling | 0 ambiguous pairs on 100-piece Voronoi; exact solver confirms N = 20 |
+| M3 | Penrose P2/P3 with ancestry; `hierarchy` grouping; collinear-run merge | 100-piece Penrose passes M2 checks |
 | M4 | Hat (Tile(a,b)) and Spectre; `metatile` grouping; natural border + frame connectors | Hat puzzle in heart-shaped frame passes all checks |
 | M5 | Laser/plotter: shared-edge cut paths, DXF, kerf | Cut test in 3 mm plywood |
 | M6 | Plate packing, 3MF, IDs, coupon command, density images, more connectors | — |

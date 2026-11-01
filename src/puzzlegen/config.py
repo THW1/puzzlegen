@@ -326,11 +326,10 @@ _IMPLEMENTED: list[tuple[str, Callable[[Any], bool], str]] = [
     ("tiling.penrose.variant", lambda x: x == "p3", "M6"),
     ("tiling.rotation", lambda x: x == 0, "M6"),
     ("tiling.voronoi.size_spread", lambda x: x == 0, "M6"),
-    ("grouping.strategy", lambda x: x == "identity", "M3"),
+    ("grouping.strategy", lambda x: x != "metatile", "M4"),
     ("connectors.kinds", lambda x: set(x) <= {"tab", "swirl", "none"}, "M6"),
     ("fabrication.mode", lambda x: x == "fdm", "M5"),
-    ("cleanup.split_degree4", lambda x: not x, "M3"),
-    ("connectors.placement", lambda x: x == "all", "M3"),
+    ("cleanup.split_degree4", lambda x: not x, "M6"),
 ]
 
 

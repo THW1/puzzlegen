@@ -155,29 +155,33 @@ must return a map that covers `region.buffer(margin)`.
   are required (Section 5). Degree-3 vertices are typical, which is good for
   connector placement.
 
-### 4.2 Penrose (P2 kite/dart, P3 rhombus) via Robinson-triangle substitution
-- Start from a seed configuration (a "sun" of 10 triangles, or one large triangle
-  that covers the region) and apply **deflation** k times. Each step scales tiles down
-  by φ (golden ratio). In P3, an obtuse triangle splits into 2 obtuse + 1 acute, and
-  an acute one into 1 obtuse + 1 acute.
-- Merge mirror triangle pairs into rhombi (P3) or kites/darts (P2) after the last step.
-  Half-triangles whose partner lies outside the generated patch are dropped. The patch
-  must therefore cover `region.buffer(margin)` with at least one tile of margin.
-- P2 (kite/dart) uses its own Robinson-triangle subdivision rules; it is not the P3
-  rule with different merging.
-- **Granularity**: choose k so the tile count inside the region is about N. Tile
-  count grows about φ² per step, so steps are coarse. For finer control, combine with
-  grouping (Section 6) or scale the seed.
-- **Hierarchical option (as suggested)**: deflate to level `k_fine` but form pieces
-  from the *supertiles* at level `k_piece < k_fine`. That is, a piece is the union of
-  the fine tiles descended from one coarse tile. The piece outline is then a jagged
-  staircase of fine-tile edges. This is still a valid tiling and gives natural
-  interlock (Section 6.2). The substitution tree gives this grouping for free: each
-  fine tile stores its ancestor id at each level.
-- Rhombi have only two shapes and parallel opposite edges, so without connectors the
-  puzzle would be massively non-unique. Penrose matching rules (edge arrows or arcs)
-  are *local* constraints and do not give global uniqueness. Connectors or
-  hierarchical grouping are mandatory here.
+### 4.2 Penrose (P3 rhombus; P2 kite/dart deferred) via Robinson-triangle substitution
+Implemented in M3 (`tilings/penrose.py`).
+- Start from a "sun" of 10 acute Robinson triangles and apply **deflation** k times;
+  each step scales tiles down by φ. An acute (red) triangle splits into 1 acute +
+  1 obtuse, an obtuse (blue) one into 2 obtuse + 1 acute (Preshing's rules). Two
+  triangles sharing edge BC form a rhombus. Half-triangles without a partner lie at
+  the patch border, outside the region.
+- **The rules are verified geometrically, not trusted** (`tests/test_penrose.py`):
+  total area is conserved, every BC pair is a thick (72°/108°) or thin (36°/144°)
+  rhombus with equal sides, and the thick:thin ratio approaches φ.
+- **P2 (kite/dart) is deferred to M6.** A rule set derived from the half-kite/half-dart
+  geometry (32 orientation variants searched) produced kites and darts locally, but
+  left pairing defects inside the patch, not only at its border. So it is not a valid
+  Penrose tiling and was not shipped.
+- **Granularity**: the level is the first whose rhombi inside the region reach the
+  target count. Then the whole patch is scaled *up* by √(count/target), which keeps
+  it covering the region and brings the count to about the target (levels alone jump
+  by φ² ≈ 2.6×).
+- The sun's centre is shifted and rotated randomly (seeded), because the sun is
+  5-fold symmetric and identical seeds would repeat whole patches.
+- **Hierarchy**: for `grouping.strategy = "hierarchy"` the target count applies to the
+  piece level, cells are `grouping.level` (default 2) levels finer, and each cell is
+  tagged with its piece-level rhombus. Depth 3 gave outlines too fine for connectors
+  and many loose pieces.
+- Rhombi have only two shapes and all joints the same length, so the connector
+  alphabet is stretched: the repair loop's drop step (§7.4) and the rescue pass for
+  pieces without a lock were added for Penrose.
 
 ### 4.3 Hat and Spectre (aperiodic monotiles)
 - **Hat**: a 13-gon (or a 14-gon with two collinear edges) made of 8 kites of the
@@ -366,28 +370,43 @@ without one are reported as `interlock.loose_pieces`. With
 - Grouping is the main source of **shape irregularity**. It is also the only way to
   get *shape-based* interlock from convex or polygonal tilings.
 
-### 6.2 Grouping strategies
+### 6.2 Grouping strategies (`grouping.py`, M3)
 | Strategy | Description | Best with |
 |----------|-------------|-----------|
-| `identity` | 1 cell = 1 piece | Voronoi, Penrose and hat with connectors |
-| `hierarchy` | Piece = all level-0 tiles under one supertile at level k | Penrose and hat/Spectre. Gives fractal-like jagged outlines |
-| `grow` | Seeded region growing on the cell adjacency graph to a target size, with compactness and anti-convexity scoring | Any. Fine cells → polyform-like pieces |
-| `metatile` | Hat-specific: H/T/P/F clusters as pieces | Hat |
+| `identity` | 1 cell = 1 piece | Voronoi, grids, Penrose with connectors |
+| `hierarchy` | Piece = all cells under one supertile (`grouping.level` levels coarser) | Penrose (hat/Spectre in M4) |
+| `grow` | Seeded region growing on the cell adjacency graph, then a lock-objective local search | Any. Fine cells → polyform-like pieces |
+| `metatile` | Hat-specific: H/T/P/F clusters as pieces | Hat (M4) |
 
-With `border = clip`, grouped pieces are cut by the region outline. The fragments go
-through sliver removal (Section 6.3) like any other clipped piece.
+- **Merging cells into a piece**: edge cancellation on vertex rings. Shared edges
+  cancel, and the rest must be *one* simple cycle (no pinch vertex, no hole).
+  Shapely unions are not used, because they may drop vertices that neighbours still use.
+- **grow**: seeds are placed by farthest-point sampling; the smallest piece grows
+  next. A candidate cell is scored by compactness (distance to the piece centroid)
+  blended with randomness (1 − compactness). A cell is only added if the piece stays
+  one simple polygon **without a neck below `min_neck`**: cells joined by a short
+  shared edge made thin necks in the first version.
+- **Lock objective**: a local search after growth. For each neighbouring pair whose
+  joint does not lock (turning criterion, §5.4), a boundary cell moves across if
+  that raises the joint's sweep, keeps both pieces valid and within 0.5–1.8 × target
+  size, and does not reduce the two pieces' locked joints. Pieces without any lock
+  are processed first. Typical result: about half of all joints lock by shape alone.
+- **Small pieces** (region-clipped supertiles, leftover cells) are merged into the
+  neighbour with the longest shared boundary.
+- Bent joints between pieces become **chain curves** (`PlanarMap.from_rings_chained`).
+  A chain without a connector gets a `shape` profile, so the uniqueness check covers
+  it (whole outline as signature).
+- **Hybrid (`connectors.placement = "unlocked"`)**: joints that lock by shape keep
+  their outline. Others get a tab on their longest segment, or, if the segments are
+  too short (≈ 6 mm between small cells), the chain is replaced by its straight chord
+  and a tab or swirl goes there. A non-locking chain loses nothing by straightening.
+  Ambiguous pairs of shape joints are resolved the same way in the repair loop.
 
-Interlock from grouping: a grouped outline has re-entrant pockets. A pocket "locks"
-if a neighbour's protrusion has a neck narrower than its head, measured along the
-removal direction. The verifier (Section 7.3) checks this generally, so grouping
-needs no special lock logic. Connectors are then optional, per edge class, for
-example only on edges that are still straight and long after grouping.
-
-Shape-locked joints (no connector) fall outside the signature rule U2 (Section 7.2).
-For them, the whole jagged joint profile is the signature. This is a weaker guarantee:
-hierarchical tilings repeat local patches, so profiles can recur. In shape-locked
-modes uniqueness is therefore *checked* (signature table plus exact solver for small
-N), not *constructed*. Adding connectors to the longest joints restores U1/U2.
+Shape-locked joints fall outside the signature rule U2 (§7.2); for them the whole
+joint profile is the signature. Hierarchical tilings repeat local patches, so profiles
+recur: in shape-locked modes uniqueness is *checked*, not constructed. Measured in M3
+(30 pieces): pure-shape Voronoi `grow` reached `strict`, while hex `grow` and Penrose
+hierarchy kept 1–3 ambiguous pairs. The hybrid mode resolves most of these.
 
 ### 6.3 Edge cleanup
 Implemented in `cleanup.py` (M2), operating on vertex-index rings before connectors
@@ -404,9 +423,11 @@ are placed:
    pieces meet, as in classic jigsaws. A contraction that would break a face is
    skipped; boundary vertices never leave the outline. On the 40-piece Voronoi
    example this turned 28 tab-less joints out of 96 into 0 out of 75.
-4. **Collinear-run merge** (M3, for hierarchical grouping): consecutive edges between
-   the same two pieces become one joint.
-5. **Degree-4+ vertex splitting** (`split_degree4`, M3, for grids and Penrose).
+4. **Chain joints** (M3): bent joints keep their vertices inside one chain curve
+   (`PlanarMap.from_rings_chained`); only vertices bending less than
+   `collinear_angle` are straightened. Removing bent vertices moved whole triangles
+   of area between pieces (seen on merged Penrose fragments).
+5. **Degree-4+ vertex splitting** (`split_degree4`, M6, for grids and Penrose).
    Contraction creates degree-4 vertices on purpose, so splitting applies only to
    tilings that have them natively.
 
@@ -687,10 +708,10 @@ Full option reference: [`USAGE.md`](USAGE.md).
 | M0 | Skeleton: config, `PlanarMap`, rect region, grid + Voronoi, `identity`, `tab` connector, SVG preview | Valid partition property tests pass |
 | M1 | Fabrication: clearance, checks, extrusion → STL, frame (clip mode), coupon, convex region shapes, interlock report | Printed 20-piece puzzle fits |
 | M2 | Cleanup (slivers, straightening, short-joint contraction); uniqueness verifier with strict/joint-level guarantee, greedy distinct placement, repair loop, exact solver, flip handling; `swirl` joints (§5.4); `verify` command | 0 ambiguous pairs on 100-piece Voronoi; exact solver confirms N = 20 |
-| M3 | Penrose P2/P3 with ancestry; `hierarchy` and `grow` grouping with lock objective (§5.4); `connectors.placement = "unlocked"`; collinear-run merge | 100-piece Penrose passes M2 checks |
+| M3 | Penrose P3 with ancestry (P2 deferred); chain joints; `hierarchy` and `grow` grouping with lock objective (§5.4); hybrid `connectors.placement = "unlocked"` | 100-piece Penrose passes M2 checks (7 of 8 seeds) |
 | M4 | Hat (Tile(a,b)) and Spectre; `metatile` grouping; natural border + frame connectors | Hat puzzle in heart-shaped frame passes all checks |
 | M5 | Laser/plotter: shared-edge cut paths, DXF, kerf | Cut test in 3 mm plywood |
-| M6 | 3MF, density images, tiling rotation, more connector kinds (dovetail, tee, double/compound) | — |
+| M6 | 3MF, density images, tiling rotation, more connector kinds (dovetail, tee, double/compound), Penrose P2, `split_degree4` | — |
 
 ---
 

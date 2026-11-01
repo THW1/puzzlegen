@@ -84,11 +84,16 @@ def cleanup(m: PlanarMap, cfg: Config) -> tuple[PlanarMap, dict]:
     max_bend = cfg["cleanup.collinear_angle"]
     _merge_slivers(R, cfg["cleanup.min_area_ratio"], min_feat, min_neck, stats, min_inscribed)
     _straighten(R, stats, max_bend)
-    threshold = cfg["connectors.min_edge"] if uses_connectors else cfg["cleanup.collapse_edge"]
+    # Cells that will be grouped are small on purpose: only tiny edges are contracted.
+    identity = cfg["grouping.strategy"] == "identity"
+    threshold = cfg["connectors.min_edge"] if (uses_connectors and identity) \
+        else cfg["cleanup.collapse_edge"]
     _contract_short(R, threshold, stats)
     _merge_slivers(R, cfg["cleanup.min_area_ratio"], min_feat, min_neck, stats, min_inscribed)
     _straighten(R, stats, max_bend)
-    return PlanarMap.from_rings_chained(R.verts, R.rings, R.tags), dict(sorted(stats.items()))
+    # Grouping needs the full vertex rings of its cells, so chains only for final pieces.
+    build = PlanarMap.from_rings_chained if identity else PlanarMap.from_rings
+    return build(R.verts, R.rings, R.tags), dict(sorted(stats.items()))
 
 
 # ---------------------------------------------------------------- slivers

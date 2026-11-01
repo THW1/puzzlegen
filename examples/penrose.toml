@@ -1,0 +1,6 @@
+# Penrose P3 rhombi (thick and thin) with tab connectors.
+name = "penrose"
+
+[tiling]
+kind = "penrose"
+target_count = 60

@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 import numpy as np
 from shapely.geometry import LineString, MultiPolygon, Polygon
@@ -54,6 +54,25 @@ LOCKING = ("tab", "swirl")
 SWIRL_THETA = (math.radians(90), math.radians(125))   # per third; sum checked
 LOBE_EPS = 1.0       # mm^2 of material an opening may remove along a swirl
 MAX_SOCKET_SHARE = 0.25   # a socket may take at most this share of the receiving piece
+
+
+@dataclass(frozen=True)
+class ShapeSpec:
+    """A bent (chain) joint without connector: its whole outline is the profile used by
+    the uniqueness check (DESIGN 6.2: shape-locked joints)."""
+    kind = "shape"
+
+    def profile_range(self, n_pts: int) -> tuple[int, int]:
+        return 0, n_pts
+
+
+def mark_shapes(m: PlanarMap) -> int:
+    n = 0
+    for c in range(len(m.curve_he)):
+        if m.is_interior_curve(c) and m.curve_spec[c] is None and len(m.curve_pts[c]) > 2:
+            m.curve_spec[c] = ShapeSpec()
+            n += 1
+    return n
 
 
 def assign(m: PlanarMap, cfg: Config, rng: np.random.Generator) -> tuple[Counter, Alphabet]:
@@ -122,24 +141,75 @@ def strip(pts: np.ndarray, spec) -> np.ndarray:
 
 
 def _place(m: PlanarMap, c: int, cfg: Config, rng: np.random.Generator, alpha: Alphabet,
-           kinds: list[str], rounds: int = 4) -> str:
+           kinds: list[str], rounds: int = 4, force_chord: bool = False) -> str:
+    base = m.curve_pts[c]
+    margin = cfg["connectors.lock_margin"]
+    if cfg["connectors.placement"] == "unlocked" and is_locking(base, margin):
+        return "shape_locked"
+    if len(base) == 2:
+        return _try(m, c, base, 0, kinds, cfg, rng, alpha, rounds) or "skipped_infeasible" \
+            if np.linalg.norm(base[1] - base[0]) >= cfg["connectors.min_edge"] else "skipped_short"
+    # Chain joint (bent). 1) a tab on one of its straight segments, longest first (M3:
+    # trying only the longest missed feasible neighbours 0.1 mm shorter);
+    seglen = np.linalg.norm(np.diff(base, axis=0), axis=1)
+    if "tab" in kinds:
+        for seg in np.argsort(-seglen):
+            if seglen[seg] < cfg["connectors.min_edge"]:
+                break
+            kind = _try(m, c, base, int(seg), ["tab"], cfg, rng, alpha, rounds)
+            if kind:
+                return kind
+    # 2) if the chain does not lock by itself, replace it by its straight chord and put
+    # any connector there (M3: chains between small grouped cells have ~6 mm segments,
+    # too short for tabs; a chain that does not lock loses nothing by straightening).
+    if is_locking(base, margin) and not force_chord:
+        return "skipped_chain"
+    return _on_chord(m, c, base, kinds, cfg, rng, alpha, rounds)
+
+
+def convert_shape(m: PlanarMap, c: int, cfg: Config, rng: np.random.Generator,
+                  alpha: Alphabet) -> str:
+    """Replace an ambiguous shape joint (chain without connector) by chord + connector
+    (repair loop, M3: Penrose supertile outlines repeat, so shape joints collide)."""
+    base, spec = m.curve_pts[c], m.curve_spec[c]
+    m.curve_spec[c] = None
+    kinds = [k for k in cfg["connectors.kinds"] if k in LOCKING] or ["tab"]
+    kind = _on_chord(m, c, base, kinds, cfg, rng, alpha, 4)
+    if kind == "skipped_infeasible":
+        m.curve_spec[c] = spec
+    return kind
+
+
+def _on_chord(m, c, base, kinds, cfg, rng, alpha, rounds) -> str:
+    chord = base[[0, -1]].copy()
+    if np.linalg.norm(chord[1] - chord[0]) < cfg["connectors.min_edge"]:
+        return "skipped_chain"
+    h = m.curve_he[c]
+    r = 0.99 * (cfg["fabrication.min_neck"] + cfg["fabrication.clearance"]) / 2
+    # Middle of the chord only: its ends always form acute corners with the zigzag's
+    # neighbours, which an opening trims a little (that is not a neck problem).
+    zone = LineString([chord[0] + 0.2 * (chord[1] - chord[0]),
+                       chord[0] + 0.8 * (chord[1] - chord[0])]).buffer(2 * r)
+    if all(_robust(m, c, chord, f, zone, cfg, r) for f in (m.face[h], m.face[m.twin[h]])):
+        m.curve_pts[c] = chord
+        kind = _try(m, c, chord, 0, kinds, cfg, rng, alpha, rounds)
+        if kind:
+            return kind
+    m.curve_pts[c] = base
+    return "skipped_infeasible"
+
+
+def _try(m: PlanarMap, c: int, base: np.ndarray, seg: int, kinds: list[str], cfg: Config,
+         rng: np.random.Generator, alpha: Alphabet, rounds: int) -> str | None:
+    """Place a connector on segment `seg` of the polyline `base`; None if nothing fits."""
     h = m.curve_he[c]
     va, vb = m.verts[m.origin[h]], m.verts[m.origin[m.twin[h]]]
-    base = m.curve_pts[c]
-    seg = 0
-    if len(base) > 2:
-        # Chain joint (bent): a tab on its longest straight segment; swirls need the
-        # whole joint straight.
-        kinds = [k for k in kinds if k == "tab"]
-        if not kinds:
-            return "skipped_chain"
-        seg = int(np.argmax(np.linalg.norm(np.diff(base, axis=0), axis=1)))
     a, b = base[seg], base[seg + 1]
     length = float(np.linalg.norm(b - a))
-    if length < cfg["connectors.min_edge"]:
-        return "skipped_short"
-    if cfg["connectors.placement"] == "unlocked" and is_locking(base, cfg["connectors.lock_margin"]):
-        return "shape_locked"
+    if len(base) > 2:
+        kinds = [k for k in kinds if k == "tab"]   # swirls need the whole joint straight
+    if not kinds:
+        return None
     k = CANDIDATES if cfg["uniqueness.enabled"] else 1
     scale = 1.0
     for _ in range(rounds):
@@ -163,7 +233,7 @@ def _place(m: PlanarMap, c: int, cfg: Config, rng: np.random.Generator, alpha: A
                 alpha.add(c, side_profiles(pts, spec, va, vb))
                 return spec.kind
         scale *= SHRINK
-    return "skipped_infeasible"
+    return None
 
 
 def _local(spec, length: float) -> np.ndarray:
@@ -222,9 +292,12 @@ def _feasible(m: PlanarMap, c: int, spec, pts: np.ndarray, cfg: Config) -> bool:
             return False
         if head.distance(m.face_boundary_except(recv, c)) < min_wall:
             return False
-        for rest in (pts[:i0], pts[i1:]):   # other segments of a chain joint
+        # Other segments of a chain joint: same clearance as the joint's own end
+        # vertices on a straight joint (end_margin), not min_wall (M3: 2-segment
+        # Penrose bends could never carry a tab with min_wall here).
+        for rest in (pts[:i0], pts[i1:]):
             if len(rest) > 2 and head.distance(LineString(rest[:-1] if rest is pts[:i0]
-                                                          else rest[1:])) < min_wall:
+                                                          else rest[1:])) < cfg["connectors.end_margin"]:
                 return False
         # Sockets must not hollow out small pieces (M3: clipped Penrose cells shrank to a
         # fifth of their area under neighbours' sockets and could not carry own tabs).

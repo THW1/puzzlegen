@@ -40,7 +40,8 @@ from ..config import Config
 from ..planar_map import PlanarMap
 
 PHI = (1 + 5 ** 0.5) / 2
-HIER_DEPTH = 3          # default levels between a piece and its cells (about 18 rhombi)
+HIER_DEPTH = 2          # default levels between a piece and its cells (about 7 rhombi);
+                        # depth 3 gave outlines too fine for tabs and many loose pieces
 MAX_LEVEL = 14
 
 

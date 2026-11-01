@@ -1,11 +1,13 @@
 # === CONTEXT ===
 # Purpose:     Run the stages of DESIGN 2 in order and collect the report data.
-#              region -> tiling -> cleanup -> (identity grouping) -> connectors -> pieces
+#              region -> tiling -> cleanup -> grouping -> connectors (+ shape joints)
+#              -> pieces
 #              -> uniqueness verification + repair -> checks
 #              -> fabrication outlines -> frame. 3D export happens in cli.py (it writes files).
 # Decisions:   One numpy Generator seeded from cfg.seed drives every random choice, in a
 #              fixed stage order, so the same config + seed gives the same output (G6).
-#              Identity grouping (1 cell = 1 piece) is implicit until M3 adds grouping.py.
+#              For `grow`, the tiling makes cells_per_piece x target cells and grouping.py
+#              merges them into the target number of pieces.
 # Related:     cli.py calls run(); export2d.py and report.py consume the Result.
 # Tests:       tests/test_partition.py, tests/test_cli.py
 # === END CONTEXT ===
@@ -17,7 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 from shapely.geometry import Polygon
 
-from . import checks, connectors, interlock, uniqueness
+from . import checks, connectors, grouping, interlock, uniqueness
 from .cleanup import cleanup
 from .config import Config, check_implemented, piece_target
 from .fabricate import Fabricated, fabricate
@@ -46,11 +48,20 @@ def run(cfg: Config) -> Result:
     check_implemented(cfg)
     rng = np.random.default_rng(cfg["seed"])
     region = make_region(cfg)
-    pmap = REGISTRY[cfg["tiling.kind"]](region, piece_target(cfg), rng, cfg)
+    n = piece_target(cfg)
+    n_cells = n
+    if cfg["grouping.strategy"] == "grow":
+        cpp = cfg["grouping.cells_per_piece"]
+        n_cells = round(n * (grouping.CELLS_PER_PIECE if cpp == "auto" else cpp))
+    pmap = REGISTRY[cfg["tiling.kind"]](region, n_cells, rng, cfg)
     pmap.check()
     pmap, cleanup_stats = cleanup(pmap, cfg)
     pmap.check()
+    pmap, group_stats = grouping.group(pmap, cfg, rng, n)
+    pmap.check()
+    cleanup_stats = {**cleanup_stats, **({"grouping": group_stats} if group_stats else {})}
     stats, alpha = connectors.assign(pmap, cfg, rng)
+    stats["shape_joints"] = connectors.mark_shapes(pmap)
     ver = _verify_and_repair(pmap, region, cfg, rng, alpha, stats)
     pieces = [pmap.face_polygon(f) for f in pmap.inner_faces()]
     return Result(cfg, region, pmap, pieces, stats, checks.partition(pieces, region),
@@ -85,9 +96,21 @@ def _verify_and_repair(pmap: PlanarMap, region: Polygon, cfg: Config,
         for c_a, c_b, _ in v.joint:
             if redraws >= budget:
                 break
-            c = c_b if rng.random() < 0.5 else c_a
-            if pmap.curve_spec[c] is None:
+            cs = [x for x in (c_a, c_b) if pmap.curve_spec[x] is not None
+                  and pmap.curve_spec[x].kind in connectors.LOCKING]
+            if not cs:
+                # Two shape joints: replace one by chord + connector.
+                for x in (c_a, c_b):
+                    if pmap.curve_spec[x] is None or pmap.curve_spec[x].kind != "shape":
+                        continue
+                    k = connectors.convert_shape(pmap, x, cfg, rng, alpha)
+                    redraws += 1
+                    if k in connectors.LOCKING:
+                        stats["shape_converted"] += 1
+                        break
+                    stats["shape_kept"] += 1
                 continue
+            c = cs[int(rng.integers(len(cs)))]
             kind = connectors.redo(pmap, c, cfg, rng, alpha)
             stats["redrawn"] += 1
             if kind == "kept_old":
@@ -115,6 +138,8 @@ def _drop_ambiguous(pmap: PlanarMap, pairs, margin: float, alpha) -> int:
             spec, pts = pmap.curve_spec[c], pmap.curve_pts[c]
             if spec is None:
                 break                            # pair already resolved
+            if spec.kind not in connectors.LOCKING:
+                continue                         # shape joints cannot be dropped
             h = pmap.curve_he[c]
             pmap.curve_spec[c] = None
             pmap.curve_pts[c] = connectors.strip(pts, spec)

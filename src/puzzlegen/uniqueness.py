@@ -41,10 +41,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-import shapely
 from scipy.spatial import cKDTree
 from shapely import affinity
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import Polygon
 
 from .planar_map import PlanarMap
 
@@ -101,8 +100,36 @@ def _feat(p: np.ndarray) -> np.ndarray:
     return np.array([p[:, 0].min(), p[:, 0].max(), p[:, 1].min(), p[:, 1].max()])
 
 
+DENSIFY = 0.5    # mm: point spacing for the discrete Hausdorff distance (error <= 0.25 mm,
+#                 well below tau; 0.25 mm made scoring 4x slower)
+
+
+def _dense(p: np.ndarray) -> np.ndarray:
+    """Polyline with extra points so no segment is longer than DENSIFY."""
+    seg = np.diff(p, axis=0)
+    n = np.maximum(1, np.ceil(np.linalg.norm(seg, axis=1) / DENSIFY).astype(int))
+    t = np.concatenate([np.arange(k) / k for k in n])
+    idx = np.repeat(np.arange(len(seg)), n)
+    return np.vstack([p[idx] + seg[idx] * t[:, None], p[-1:]])
+
+
+def _hausdorff_many(p: np.ndarray, qs: list[np.ndarray]) -> np.ndarray:
+    """Symmetric discrete Hausdorff distances from densified polyline p to each of the
+    densified polylines qs, in one vectorised pass (M3: one Shapely call per pair was
+    80 % of a 100-piece Penrose run; per-pair NumPy or SciPy calls were slower still)."""
+    if not qs:
+        return np.zeros(0)
+    lens = np.array([len(q) for q in qs])
+    starts = np.concatenate([[0], np.cumsum(lens)[:-1]])
+    Q = np.vstack(qs)
+    d = np.sqrt(((p[:, None, :] - Q[None, :, :]) ** 2).sum(axis=2))   # |p| x |Q|
+    p_to_q = np.minimum.reduceat(d, starts, axis=1).max(axis=0)          # per q
+    q_to_p = np.maximum.reduceat(d.min(axis=0), starts)
+    return np.maximum(p_to_q, q_to_p)
+
+
 def _hausdorff(p: np.ndarray, q: np.ndarray) -> float:
-    return float(shapely.hausdorff_distance(LineString(p), LineString(q), densify=0.25))
+    return float(_hausdorff_many(p, [q])[0])
 
 
 class Alphabet:
@@ -118,7 +145,7 @@ class Alphabet:
 
     def add(self, c: int, sides: list[tuple]) -> None:
         # Mated into this profile, a candidate's joint must span [-x_hi, -x_lo].
-        self.items[c] = [(-s[0], -s[3], -s[2]) for s in sides]
+        self.items[c] = [(_dense(-s[0]), -s[3], -s[2]) for s in sides]
         self._cache = None
 
     def remove(self, c: int) -> None:
@@ -145,18 +172,20 @@ class Alphabet:
         owners, negs, feats, spans = self._index()
         if not negs:
             return self.tau, self.tau
-        cand = [(s[0], s[2], s[3]) for s in sides]
+        cand = [(_dense(s[0]), s[2], s[3]) for s in sides]
         if self.flippable:
             cand += [(p * np.array([-1.0, 1.0]), -hi, -lo) for p, lo, hi in cand]
         best_s = best_j = self.tau
         for p, lo, hi in cand:
             near = np.nonzero(np.all(np.abs(feats - _feat(p)) < best_s, axis=1)
                               & (owners != c))[0]
-            for k in near:
-                d = _hausdorff(p, negs[k])
-                best_s = min(best_s, d)
-                if abs(spans[k, 0] - lo) < self.tau and abs(spans[k, 1] - hi) < self.tau:
-                    best_j = min(best_j, d)
+            if not len(near):
+                continue
+            d = _hausdorff_many(p, [negs[k] for k in near])
+            best_s = min(best_s, float(d.min()))
+            joint = (np.abs(spans[near, 0] - lo) < self.tau) & (np.abs(spans[near, 1] - hi) < self.tau)
+            if joint.any():
+                best_j = min(best_j, float(d[joint].min()))
         return best_j, best_s
 
 
@@ -187,19 +216,18 @@ def compatible_pairs(profs: list[Profile], tau: float, flippable: bool):
     """All (i, j, R, dist) with profile i ~ -j (or mirrored i ~ -j), different pieces."""
     if not profs:
         return []
-    neg = [-p.pts for p in profs]
+    neg = [_dense(-p.pts) for p in profs]
     tree = cKDTree(np.array([_feat(q) for q in neg]))
     variants = [(R_MATE, 1.0)] + ([(R_MIRROR, -1.0)] if flippable else [])
     out = []
     for R, sx in variants:
         for i, a in enumerate(profs):
-            pa = a.pts * np.array([sx, 1.0])
-            for j in tree.query_ball_point(_feat(pa), tau, p=np.inf):
-                if profs[j].face == a.face:
-                    continue
-                d = _hausdorff(pa, neg[j])
+            pa = _dense(a.pts * np.array([sx, 1.0]))
+            js = [j for j in tree.query_ball_point(_feat(pa), tau, p=np.inf)
+                  if profs[j].face != a.face]
+            for j, d in zip(js, _hausdorff_many(pa, [neg[j] for j in js])):
                 if d < tau:
-                    out.append((i, j, R, d))
+                    out.append((i, j, R, float(d)))
     return out
 
 

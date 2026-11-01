@@ -52,8 +52,8 @@ def _parser() -> argparse.ArgumentParser:
 def _list() -> None:
     from .tilings import REGISTRY
     print("tilings (implemented):", ", ".join(sorted(REGISTRY)))
-    print("groupings (implemented): identity")
-    print("connectors (implemented): tab, none")
+    print("groupings (implemented): identity, hierarchy (penrose), grow")
+    print("connectors (implemented): tab, swirl, none; placement: all, unlocked")
     print(f"config keys: {len(SCHEMA)} (see USAGE.md section 3)")
 
 

@@ -125,7 +125,7 @@ def group(m: PlanarMap, cfg: Config, rng: np.random.Generator, n_pieces: int
         return m, {}
     C = _Cells(m, 0.99 * (cfg["fabrication.min_neck"] + cfg["fabrication.clearance"]) / 2)
     stats: Counter = Counter()
-    if strategy == "hierarchy":
+    if strategy in ("hierarchy", "metatile"):        # both group by the tiling's tags
         groups = _hierarchy(C)
     elif strategy == "grow":
         groups = _grow(C, n_pieces, cfg["grouping.compactness"], rng, stats)

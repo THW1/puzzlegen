@@ -102,28 +102,37 @@ store.
 
 ## 3. Region and frame (input shape)
 
-A `Region` is a Shapely polygon: a rectangle, circle, regular polygon, an SVG path
-(heart, silhouette), or a polygon with holes.
+A `Region` is a Shapely polygon: a rectangle, ellipse/circle, regular polygon, or the
+largest closed outline of an SVG file (M4, via `svgelements`; may be non-convex, holes
+are ignored). A relative `region.path` is resolved against the config file's folder.
+Non-convex regions can split a clipped cell into several parts; each part becomes its
+own cell.
 
-There are two **border modes**:
+**Border modes** (implemented in M4, `border.py`):
 
-| Mode | How it works | Frame cavity | Pros / cons |
-|------|--------------|--------------|-------------|
-| `clip` | Generate the tiling larger than the region and clip it to the region | Smooth region outline (+ clearance) | Classic look. Clipping creates slivers, which Section 6 merges away. Outer edges are straight, so give them connectors so the frame is not "free" |
-| `natural` | Keep whole cells whose centroid lies inside the region. The outline becomes the jagged union of cells | Jagged outline (+ clearance) | The frame border *matches* the irregular pieces. Strongly constrains edge pieces and aids uniqueness. Outer outline is only approximately the region shape |
-| `natural+clip` | Natural inside, then clip to a slightly larger outer rectangle | Mixed | Gives a rectangular frame exterior with an irregular cavity |
+| Mode | How it works | Frame cavity |
+|------|--------------|--------------|
+| `clip` | Tiling clipped to the outline; slivers are merged by cleanup (§6.3) | Smooth outline (+ clearance/2) |
+| `natural` | Tiling generated over the outline grown by `region.margin`; after grouping, whole pieces whose centroid lies inside are kept. Enclosed pieces are added and only the largest connected part is kept, so the region stays one polygon without holes | Jagged outline of the pieces |
+| `natural+clip` | Same pieces as `natural`; use `frame.exterior = "bbox"` for a rectangular outside | Jagged |
 
-**Frame** (optional, `frame.enabled`):
-- `frame.style = tray` (base plate + wall) | `ring` (wall only) | `none`.
+**Frame** (`frame.style`):
+- `tray` (base plate + wall), `ring` (wall only) or `none`.
 - Cavity = outline of the *un-offset* piece union, grown by `+clearance/2`. Pieces
-  shrink by `clearance/2` (Section 8), so the gap to the frame equals the gap between
-  pieces. Exterior = region bounding shape plus wall width, with outer corners rounded.
-- Frame edges can carry **connectors toward edge pieces** (`frame.connectors = true`).
-  The frame then participates in interlocking and uniqueness like a fixed piece. This
-  is what "matching borders" means in the strong sense.
+  shrink by `clearance/2` (§8), so the gap to the frame equals the gap between pieces.
+  Exterior = bounding box (rounded corners) or offset of the cavity, plus the wall
+  width.
+- Thin frame spikes reaching into narrow notches between border pieces (natural
+  borders) are removed by an opening of `min_feature`/2; a small void remains instead.
+- **Frame connectors** (`frame.connectors`, auto = on for natural borders), M4:
+  boundary joints get tabs like interior joints. A head pointing into the frame must
+  stay inside the frame wall with `min_wall` to its outer edge and to every other
+  piece; a head from the frame into a piece follows the normal socket rules. The frame
+  acts as a fixed piece (face 0) in the uniqueness check, the mate graph and the lock
+  check (a lock with the frame holds its edge piece), and the cavity follows the
+  pieces' union including these connectors.
 - Large frames are split into segments that fit the print bed, joined by dovetails
-  (`frame.max_segment`).
-- Optional thumb notch or a lifted corner so the first piece can be removed.
+  (`frame.max_segment`). A thumb notch helps lift the first piece.
 
 ---
 
@@ -191,35 +200,35 @@ Implemented in M3 (`tilings/penrose.py`).
   **reflected** hats.
 - **Spectre**: Tile(1,1) with modified (curved) edges. It is *strictly chiral*: it
   tiles aperiodically with no reflected copies, even when reflections are allowed.
-  This matters for printing: **all Spectre pieces have the same handedness**, so a
-  single-sided print never needs mirrored pieces.
-- **Generation**: hierarchical substitution over the four **metatiles H, T, P, F**
-  (at the first level they are clusters of 4, 1, 2 and 2 hats; higher-level metatiles
-  are not exactly similar to these, and their shapes converge only in the limit). Implement the substitution from the paper and keep
-  track of each hat's ancestry. For the Spectre, use its own substitution (the Spectre
-  paper describes clusters).
-- **Exact coordinates** (hat = Tile(1, √3) and turtle = Tile(√3, 1) only): their
-  vertices lie on the kite lattice. Represent them as
-  integer coordinates in a hexagonal or Eisenstein-type basis and convert to mm only at
-  the end. This makes vertex deduplication exact. (Spectre vertices are not on that
-  lattice, so they use floats with the snapping hash. The same applies to a general
-  Tile(a, b).)
-- **Tile(a,b) as a design knob**: interpolate between the hat and the turtle for
-  different looks. Edge combinatorics stay the same, so the topology code is unchanged.
-- **Puzzle-specific remarks**:
-  - Hats are non-convex. Two hats can already partially hook into each other, but
-    this does **not** form a secure neck lock. Connectors or hierarchical grouping are
-    still needed.
-  - In a `hat-flip` mode, use the reflected hats as a deliberate challenge: pieces
-    have no top/bottom marking, and some pieces must be flipped. In the default mode,
-    every piece is printed with the tiling's top side up (reflected hats are simply
-    printed as their mirror-image outline) and the top surface is marked, so no piece
-    needs flipping.
-  - Grouping metatiles (H/T/P/F) or higher-level supertiles into single pieces gives
-    very irregular, interlocking outlines (Section 6.2).
-- **Reference implementations** (for cross-checking, not copying unless the licence
-  allows): Craig Kaplan's interactive hat/spectre web apps. Check the licences before
-  porting any code.
+  So **all Spectre pieces have the same handedness**.
+
+**Implementation (M4)**:
+- The substitution systems are **vendored, not re-derived**
+  (`tilings/_kaplan.py`): Kaplan's hatviz (BSD-3) via the hat-amp port (MIT), and
+  Kaplan's Spectre app via hat-amp (the Spectre app's own licence could not be
+  verified; see `THIRD_PARTY_NOTICES.md`).
+- They are **verified geometrically in tests**: every tile is congruent to the
+  prototile, tiles do not overlap, hat patches contain reflected hats (about 12.7 %),
+  and Spectre patches have one handedness only.
+- That verification found a flaw in the source: Kaplan's *intermediate* hat patch
+  holds scaffolding tiles that overlap real ones and belong to no extracted metatile,
+  yet hat-amp's patch-level API returns them. The tool expands the H metatile instead,
+  as hatviz itself draws it.
+- **Placement**: the tile size follows from the target count (for grouped strategies,
+  times the mean group size). The substitution level grows until the region, rotated
+  randomly (seeded) and scaled, fits inside the patch shrunk by two tile diameters,
+  anchored at the patch's deepest interior point.
+- **Tags**: the tree path cut to `height` levels above the tiles. `metatile` = height 1
+  (H/T/P/F clusters of 4, 1, 2, 2 hats); `hierarchy` = `grouping.level` (default 2).
+  Spectre tiles inside a Mystic sit one level deeper; cutting by absolute prefix length
+  keeps both halves together.
+- The hat's length-2 edge produces T-junctions with neighbouring vertices;
+  `PlanarMap.from_polygons` inserts such vertices into the edges.
+- **Not yet** (M6): other `Tile(a,b)` members (turtle etc.) and the Spectre's curved
+  edges; both need their own geometry.
+- **Observed in M4**: one hat per piece at about 30 pieces gives many joint-level
+  pairs, because identical hat outlines repeat. Yet the exact solver proves one
+  assembly (§7). Metatile grouping with hybrid connectors also passes.
 
 ### 4.4 Additional cheap generators (later)
 - Jittered square or hex grids: the classic jigsaw baseline, useful for tests.
@@ -471,6 +480,7 @@ So two levels are reported (`checks.uniqueness.guarantee`):
 
 | Level | Condition | Meaning |
 |-------|-----------|---------|
+| `exact` | The exact solver (≤ 30 pieces) ran to completion and found exactly one assembly | Proven for all assemblies reachable through mates (with a frame: starting from the fixed frame). Overrides the levels below when available (M4) |
 | `strict` | U2 holds for every connector | Unique by the argument above (with U1, U3 and a connected mate graph) |
 | `joint-level` | No shape-compatible pair whose joints also end at the same two points when mated | A false mate would need the rest of the joint bordered by other pieces meeting it mid-edge (T-junctions), and that would have to continue consistently through the whole puzzle. Not excluded in principle, but very contrived |
 
@@ -709,9 +719,9 @@ Full option reference: [`USAGE.md`](USAGE.md).
 | M1 | Fabrication: clearance, checks, extrusion → STL, frame (clip mode), coupon, convex region shapes, interlock report | Printed 20-piece puzzle fits |
 | M2 | Cleanup (slivers, straightening, short-joint contraction); uniqueness verifier with strict/joint-level guarantee, greedy distinct placement, repair loop, exact solver, flip handling; `swirl` joints (§5.4); `verify` command | 0 ambiguous pairs on 100-piece Voronoi; exact solver confirms N = 20 |
 | M3 | Penrose P3 with ancestry (P2 deferred); chain joints; `hierarchy` and `grow` grouping with lock objective (§5.4); hybrid `connectors.placement = "unlocked"` | 100-piece Penrose passes M2 checks (7 of 8 seeds) |
-| M4 | Hat (Tile(a,b)) and Spectre; `metatile` grouping; natural border + frame connectors | Hat puzzle in heart-shaped frame passes all checks |
+| M4 | Hat and Spectre (vendored, verified); SVG regions, non-convex support; natural border; `metatile` grouping; frame connectors; `exact` guarantee | Hat puzzle in heart-shaped frame passes all checks (`examples/heart_hat.toml`; 5 of 6 seeds in a sweep) |
 | M5 | Laser/plotter: shared-edge cut paths, DXF, kerf | Cut test in 3 mm plywood |
-| M6 | 3MF, density images, tiling rotation, more connector kinds (dovetail, tee, double/compound), Penrose P2, `split_degree4` | — |
+| M6 | 3MF, density images, tiling rotation, more connector kinds (dovetail, tee, double/compound), Penrose P2, `split_degree4`, Tile(a,b) variants, curved Spectre edges | — |
 
 ---
 

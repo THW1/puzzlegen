@@ -41,7 +41,8 @@ import numpy as np
 from shapely.geometry import LineString, MultiPolygon, Polygon
 
 from ..config import Config
-from ..planar_map import PlanarMap
+from ..frame import exterior_of
+from ..planar_map import OUTSIDE, PlanarMap
 from ..interlock import is_locking
 from ..uniqueness import Alphabet, side_profiles
 from . import swirl as sw
@@ -75,12 +76,21 @@ def mark_shapes(m: PlanarMap) -> int:
     return n
 
 
-def assign(m: PlanarMap, cfg: Config, rng: np.random.Generator) -> tuple[Counter, Alphabet]:
-    """Decorate interior joints in place; returns counts and the alphabet of profiles."""
+def assign(m: PlanarMap, cfg: Config, rng: np.random.Generator, region=None,
+           frame_connectors: bool = False) -> tuple[Counter, Alphabet]:
+    """Decorate interior joints (and, with frame connectors, the joints between edge
+    pieces and the frame) in place; returns counts and the alphabet of profiles."""
     stats: Counter = Counter()
     tau = cfg["uniqueness.tolerance_k"] * cfg["fabrication.clearance"]
     alpha = Alphabet(tau, cfg["uniqueness.flippable"])
     curves = [c for c in range(len(m.curve_he)) if m.is_interior_curve(c)]
+    m.frame_exterior = None
+    if frame_connectors:
+        # Joints between edge pieces and the frame (DESIGN 3): the frame acts as a fixed
+        # piece; heads into the frame must stay inside its wall.
+        m.frame_exterior = exterior_of(region.buffer(cfg["fabrication.clearance"] / 2,
+                                                     join_style="mitre"), cfg)
+        curves += [c for c in range(len(m.curve_he)) if not m.is_interior_curve(c)]
     kinds = [k for k in cfg["connectors.kinds"] if k in LOCKING]
     if not kinds:
         stats["none"] = len(curves)
@@ -190,7 +200,8 @@ def _on_chord(m, c, base, kinds, cfg, rng, alpha, rounds) -> str:
     # neighbours, which an opening trims a little (that is not a neck problem).
     zone = LineString([chord[0] + 0.2 * (chord[1] - chord[0]),
                        chord[0] + 0.8 * (chord[1] - chord[0])]).buffer(2 * r)
-    if all(_robust(m, c, chord, f, zone, cfg, r) for f in (m.face[h], m.face[m.twin[h]])):
+    if all(_robust(m, c, chord, f, zone, cfg, r)
+           for f in (m.face[h], m.face[m.twin[h]]) if f != OUTSIDE):
         m.curve_pts[c] = chord
         kind = _try(m, c, chord, 0, kinds, cfg, rng, alpha, rounds)
         if kind:
@@ -287,17 +298,23 @@ def _feasible(m: PlanarMap, c: int, spec, pts: np.ndarray, cfg: Config) -> bool:
         head = Polygon(pts[i0:i1])          # neck base to neck base, closed along the chord
         if not head.is_valid or head.area <= 0:
             return False
+        giver = m.face[m.twin[h]] if spec.side > 0 else m.face[h]
+        if recv == OUTSIDE:
+            return _fits_frame(m, c, head, giver, min_wall)
         recv_poly = m.face_polygon(recv)
         if not recv_poly.buffer(1e-9).contains(head):
             return False
         if head.distance(m.face_boundary_except(recv, c)) < min_wall:
             return False
-        # Other segments of a chain joint: same clearance as the joint's own end
-        # vertices on a straight joint (end_margin), not min_wall (M3: 2-segment
-        # Penrose bends could never carry a tab with min_wall here).
+        # Other segments of a chain joint: min_wall, like any other edge of the piece.
+        # (M3 relaxed this to end_margin; M4 showed that leaves walls of 3 mm, i.e.
+        # 2.75 mm after the clearance offset, below min_neck - pieces split.)
+        # The full neighbouring polylines, shared vertex included - exactly the rule a
+        # straight joint already obeys against its adjacent joints. (Until M4 the
+        # shared vertex was dropped and 2-point rests skipped, so the neighbouring
+        # segment of a 2-segment chain was never checked.)
         for rest in (pts[:i0], pts[i1:]):
-            if len(rest) > 2 and head.distance(LineString(rest[:-1] if rest is pts[:i0]
-                                                          else rest[1:])) < cfg["connectors.end_margin"]:
+            if len(rest) >= 2 and head.distance(LineString(rest)) < min_wall:
                 return False
         # Sockets must not hollow out small pieces (M3: clipped Penrose cells shrank to a
         # fifth of their area under neighbours' sockets and could not carry own tabs).
@@ -308,9 +325,11 @@ def _feasible(m: PlanarMap, c: int, spec, pts: np.ndarray, cfg: Config) -> bool:
         # M3: a head on a 2 mm corner wedge of a clipped Penrose cell).
         # Radius 0.99 x the limit (as in fabricate.py), so the tab's own neck - exactly
         # min_neck + clearance wide - survives; the zone excludes the head itself.
-        giver = m.face[m.twin[h]] if spec.side > 0 else m.face[h]
+        if giver == OUTSIDE:
+            return True                      # the frame wall carries the head
         zone = LineString(pts[[i0, i1 - 1]]).buffer(2 * r + head.length / 8).difference(head)
         return _robust(m, c, pts, giver, zone, cfg, r)
+
     # swirl: curve stays clear of both faces' other boundaries, faces stay thick enough
     curve = LineString(pts[1:-1])
     if not curve.is_simple:
@@ -327,6 +346,22 @@ def _feasible(m: PlanarMap, c: int, spec, pts: np.ndarray, cfg: Config) -> bool:
         finally:
             m.curve_pts[c] = old_pts
         if not _robust(m, c, pts, f, middle, cfg):
+            return False
+    return True
+
+
+def _fits_frame(m: PlanarMap, c: int, head: Polygon, giver: int, min_wall: float) -> bool:
+    """A head reaching into the frame: inside the frame wall with min_wall to its outer
+    edge, and min_wall away from every other piece (including heads they already push
+    into the frame) and from the giving piece's other edges."""
+    ext = getattr(m, "frame_exterior", None)
+    if ext is None or not ext.buffer(-min_wall).contains(head):
+        return False
+    if head.distance(m.face_boundary_except(giver, c)) < min_wall:
+        return False
+    zone = head.buffer(min_wall)
+    for f in m.inner_faces():
+        if f != giver and m.face_polygon(f).intersects(zone):
             return False
     return True
 

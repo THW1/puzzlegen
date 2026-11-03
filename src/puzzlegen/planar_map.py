@@ -7,7 +7,8 @@
 #              because shared edges drift apart after decoration and adjacency then has
 #              to be re-derived with tolerances.
 #              Vertex merging in `from_polygons` clusters points within `snap` using a
-#              KD-tree + union-find. Rejected: rounding coordinates to a grid, because two
+#              KD-tree + union-find; vertices lying on another polygon's edge are inserted
+#              into that edge (T-junctions, e.g. the hat's length-2 edge). Rejected: rounding coordinates to a grid, because two
 #              nearly equal points can round to different cells.
 #              Plain Python lists for half-edge fields: maps have at most a few thousand
 #              edges, and clarity beats vectorisation here.
@@ -54,7 +55,7 @@ class PlanarMap:
     # ------------------------------------------------------------ construction
     @classmethod
     def from_polygons(cls, polygons: list[np.ndarray], snap: float = 1e-6,
-                      tags: list | None = None) -> "PlanarMap":
+                      tags: list | None = None, chained: bool = False) -> "PlanarMap":
         """Build a map from cell polygons (each an (k, 2) array, open ring). `tags`
         (one per polygon, e.g. Penrose ancestry) end up in face_tag."""
         pts = np.concatenate([np.asarray(p, float) for p in polygons])
@@ -66,7 +67,8 @@ class PlanarMap:
         for p in polygons:
             rings.append([int(v) for v in inv[k:k + len(p)]])
             k += len(p)
-        return cls.from_rings(verts, rings, tags)
+        rings = _split_t_junctions(verts, rings, snap)
+        return (cls.from_rings_chained if chained else cls.from_rings)(verts, rings, tags)
 
     @classmethod
     def from_rings(cls, verts: np.ndarray, rings: list[list[int]], tags: list | None = None,
@@ -160,7 +162,11 @@ class PlanarMap:
                 users[v] = users.get(v, 0) + 1
                 owner.add((v, r[(k + 1) % len(r)]))
         boundary = {u for (u, v) in owner if (v, u) not in owner}
-        junction = {v for v, n in users.items() if n != 2 or v in boundary}
+        # Junctions: where 3+ pieces meet, or where two pieces meet the outline. A bend
+        # shared by two pieces, and an outline bend touched by one piece, are chain
+        # vertices (M4: natural borders are made of many short tile edges, which would
+        # otherwise be separate joints too short for frame connectors).
+        junction = {v for v, n in users.items() if n >= 3 or (n == 2 and v in boundary)}
         changed = True
         while changed:
             changed = False
@@ -258,6 +264,37 @@ class PlanarMap:
         assert len(seen) == n, "half-edges not on any face cycle"
         v, e, fc = len(self.verts), n // 2, self.n_faces
         assert v - e + fc == 2, f"Euler: V-E+F = {v - e + fc}"
+
+
+def _split_t_junctions(verts: np.ndarray, rings: list[list[int]], tol: float
+                       ) -> list[list[int]]:
+    """Insert into each ring edge the vertices of other polygons that lie on it.
+    Needed for the hat: its 13-gon outline has one edge of length 2, and a neighbour's
+    vertex can sit at that edge's midpoint (T-junction), so shared edges would not match
+    end to end."""
+    tree = cKDTree(verts)
+    out = []
+    for r in rings:
+        new = []
+        for i, u in enumerate(r):
+            v = r[(i + 1) % len(r)]
+            new.append(u)
+            a, b = verts[u], verts[v]
+            d = b - a
+            L2 = float(d @ d)
+            if L2 <= tol * tol:
+                continue
+            cand = tree.query_ball_point((a + b) / 2, np.sqrt(L2) / 2 + tol)
+            on = []
+            for w in cand:
+                if w in (u, v):
+                    continue
+                t = float((verts[w] - a) @ d) / L2
+                if 0 < t < 1 and np.linalg.norm(a + t * d - verts[w]) <= tol:
+                    on.append((t, w))
+            new.extend(w for _, w in sorted(on))
+        out.append(new)
+    return out
 
 
 def _signed_area(p: np.ndarray) -> float:

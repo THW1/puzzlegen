@@ -226,9 +226,13 @@ Implemented in M3 (`tilings/penrose.py`).
   `PlanarMap.from_polygons` inserts such vertices into the edges.
 - **Not yet** (M6): other `Tile(a,b)` members (turtle etc.) and the Spectre's curved
   edges; both need their own geometry.
-- **Observed in M4**: one hat per piece at about 30 pieces gives many joint-level
-  pairs, because identical hat outlines repeat. Yet the exact solver proves one
-  assembly (§7). Metatile grouping with hybrid connectors also passes.
+- **Observed in M4** (6 seeds each): one hat per piece at about 30 pieces gives many
+  joint-level pairs, because identical hat outlines repeat; yet the exact solver proves
+  one assembly in 6/6 runs, both in a rectangle and in the heart with frame connectors.
+  Metatile grouping with hybrid connectors passes 5/6.
+- **Known limit**: Spectre puzzles leave loose pieces in 5 of 6 runs (hierarchy,
+  25 pieces). All Spectre edges have the same short length, so few joints have room for
+  a tab. Fewer, larger pieces or curved Spectre edges (M6) are the way forward.
 
 ### 4.4 Additional cheap generators (later)
 - Jittered square or hex grids: the classic jigsaw baseline, useful for tests.

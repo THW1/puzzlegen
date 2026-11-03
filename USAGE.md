@@ -355,6 +355,7 @@ formats = ["svg", "dxf"]
 |--------------------------------|----------------|
 | `ambiguous_pairs > 0` (joint-level) | Add connector kinds (`["tab", "swirl"]`), widen `head_size`, raise `max_iter`, or lower `target_count` |
 | `guarantee` values | `exact` (solver proved one assembly, ≤ 60 pieces) > `strict` (all connector shapes unique) > `joint-level` (heuristic) |
+| Loose pieces with `spectre` | Spectre edges are short and equal: lower `target_count` (larger pieces), use `hierarchy` with `level = 1`, or reduce `connectors.head_size` |
 | Many ambiguous pairs with hats or Spectres (`identity`) | Identical tile outlines repeat; keep `target_count` ≤ 60 so the exact solver decides, or use `metatile`/`hierarchy` grouping |
 | `guarantee = "joint-level"` instead of `"strict"` | Normal above ~25 pieces (limited number of distinguishable tab shapes, DESIGN §7.2). For `strict`: fewer pieces, wider `head_size`, or mixed kinds |
 | Many `skipped_infeasible` with `swirl` | Joints too short: raise `connectors.min_edge` to about 22 and lower `target_count` |

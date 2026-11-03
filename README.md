@@ -7,29 +7,26 @@ matching frame and a verified unique solution.
 - Design: [`DESIGN.md`](DESIGN.md)
 - CLI and options (specification): [`USAGE.md`](USAGE.md)
 
-## Status: milestone M3
+## Status: milestone M4
 
 Works now:
-- Regions: rectangle, ellipse/circle, regular polygon, optional rounded corners.
-- Tilings: Voronoi (blue-noise or uniform seeds, Lloyd relaxation), jittered square
-  and hex grids, **Penrose P3** (rhombi; subdivision rules verified geometrically).
-- Grouping: `hierarchy` (Penrose supertiles as pieces) and `grow` (pieces grown from
-  small cells, with a local search that makes joints lock by shape).
-- Cleanup: sliver and fragile-piece merging, chain joints for bent edges,
-  contraction of joints too short for a connector.
-- Connectors: classic tabs and `swirl` joints; hybrid placement (`unlocked`) puts
-  connectors only where the shape does not lock already.
-- Uniqueness check with two guarantee levels (strict / joint-level), repair loop,
-  mate-graph check and an exact solver for small puzzles (`puzzlegen verify`).
+- Regions: rectangle, ellipse/circle, regular polygon, rounded corners, and **SVG
+  outlines** (non-convex, e.g. a heart; `pip install svgelements`).
+- Tilings: Voronoi, jittered square/hex grids, Penrose P3 (rhombi), **hat** and
+  **Spectre** aperiodic monotiles (substitution systems vendored from Kaplan's reference
+  implementations and verified geometrically; see `THIRD_PARTY_NOTICES.md`).
+- Grouping: `hierarchy` (supertiles), `metatile` (hat clusters), `grow` (pieces grown
+  from small cells with a lock objective).
+- **Natural border**: whole pieces along the outline; the frame follows them, and
+  **frame connectors** tie edge pieces to the frame.
+- Connectors: classic tabs and `swirl` joints; hybrid placement (`unlocked`).
+- Uniqueness check with three guarantee levels: `exact` (solver proof, ≤ 60 pieces),
+  `strict`, `joint-level`; repair loop and mate-graph check (`puzzlegen verify`).
 - Fabrication checks, tray/ring frame with dovetailed segments, STL with chamfers and
-  engraved IDs, `puzzlegen coupon`, JSON report with all checks.
+  engraved IDs, colour sets for multi-colour printing, `puzzlegen coupon`, JSON report.
 
-Not yet: hat/Spectre and `metatile` grouping, SVG regions, natural borders (M4); laser
-output (M5); Penrose P2 kites/darts, 3MF, more connector kinds (M6).
-
-Uniqueness in short: small puzzles (about 25 pieces or fewer) usually reach the
-`strict` guarantee; larger ones reach `joint-level` (DESIGN §7.2). 100-piece Penrose
-puzzles passed all checks in 7 of 8 seeds.
+Not yet: laser/plotter output (M5); Penrose P2, other Tile(a,b) shapes, curved Spectre
+edges, 3MF, more connector kinds (M6).
 
 ## Try it
 
@@ -42,6 +39,7 @@ puzzlegen verify examples/swirl_grid.toml           # uniqueness + interlock sum
 puzzlegen preview examples/penrose.toml             # Penrose rhombi with tabs
 puzzlegen preview examples/penrose_hier.toml        # Penrose supertiles, hybrid tabs
 puzzlegen preview examples/grow_shape.toml          # grown pieces, mostly shape-locked
+puzzlegen generate examples/heart_hat.toml          # hats in a heart-shaped frame
 puzzlegen preview examples/grid_square.toml --set tiling.grid.cell='"hex"'
 python3 -m pytest -q
 ```

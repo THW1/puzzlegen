@@ -96,8 +96,8 @@ defaults, is written to the report.
 | `size` | [w, h] | `[200, 150]` | > 0 | Bounding size. For `circle`: `[d, d]`; unequal values give an ellipse. For `svg`: the box the path is fitted into, keeping its aspect ratio |
 | `sides` | int | `6` | ≥ 3 | Number of sides for `polygon` |
 | `corner_radius` | float | `0.0` | ≥ 0 | Rounds the corners of `rect` and `polygon` |
-| `path` | path | — | `.svg` file | Required for `svg`. The first closed path is used; holes are kept |
-| `border` | string | `"clip"` | `clip`, `natural`, `natural+clip` | `clip`: cut cells at the outline (smooth border). `natural`: keep whole cells whose centroid is inside (jagged border that matches the pieces). `natural+clip`: natural cavity inside a rectangular outer border |
+| `path` | path | — | `.svg` file | Required for `svg`. The largest closed outline is used (holes are ignored). Relative paths are resolved against the config file's folder, then the working directory. Needs `pip install svgelements` |
+| `border` | string | `"clip"` | `clip`, `natural`, `natural+clip` | `clip`: cut cells at the outline (smooth border). `natural`: keep whole pieces whose centroid is inside (jagged border that matches the pieces; the frame follows it). `natural+clip`: same pieces as `natural`; combine with `frame.exterior = "bbox"` for a rectangular outside |
 | `margin` | float | auto | ≥ 0 | How far beyond the outline the tiling is generated. Auto = 2 × the mean piece size |
 
 ### 3.3 `[tiling]` — cell generator (§4)
@@ -127,7 +127,7 @@ defaults, is written to the report.
 #### `[tiling.hat]`
 | Key | Type | Default | Allowed | Description |
 |-----|------|---------|---------|-------------|
-| `a`, `b` | float | `1.0`, `1.7320508` | a, b > 0 | Shape in the Tile(a, b) family: hat = (1, √3), turtle = (√3, 1). (1, 0) and (0, 1) are rejected because those tiles tile periodically |
+| `a`, `b` | float | `1.0`, `1.7320508` | a, b > 0 | Shape in the Tile(a, b) family: hat = (1, √3), turtle = (√3, 1). Only the hat is implemented; other values are rejected until M6. (1, 0) and (0, 1) are always rejected because those tiles tile periodically |
 | `levels` | int or `"auto"` | `"auto"` | ≥ 1 | Number of substitution steps |
 | `flip_mode` | bool | `false` | — | `true`: no top marking, so reflected hats must be flipped by the player. Sets `uniqueness.flippable = true` |
 
@@ -135,7 +135,7 @@ defaults, is written to the report.
 | Key | Type | Default | Allowed | Description |
 |-----|------|---------|---------|-------------|
 | `levels` | int or `"auto"` | `"auto"` | ≥ 1 | Number of substitution steps |
-| `curved_edges` | bool | `true` | — | Use the Spectre's curved edges. `false` gives the straight-edged Tile(1,1) polygon; the tiling is the same, but a flipped piece can then fit where its mirror image would, so `uniqueness.flippable` should stay on or the top must be marked |
+| `curved_edges` | bool | `false` | — | Use the Spectre's curved edges (not implemented yet, M6). `false` gives the straight-edged Tile(1,1) polygon: same tiling, but a flipped piece could fit where its mirror image would, so mark the top (default `top_edge` chamfer) or set `uniqueness.flippable` |
 
 #### `[tiling.grid]`
 | Key | Type | Default | Allowed | Description |
@@ -146,7 +146,7 @@ defaults, is written to the report.
 ### 3.4 `[grouping]` — cells → pieces (§6.2)
 | Key | Type | Default | Allowed | Description |
 |-----|------|---------|---------|-------------|
-| `strategy` | string | `"identity"` | `identity`, `hierarchy`, `grow`, `metatile` | `identity`: 1 cell = 1 piece. `hierarchy`: a piece = all tiles under one supertile (Penrose, hat, spectre only). `grow`: random region growing. `metatile`: hat H/T/P/F clusters |
+| `strategy` | string | `"identity"` | `identity`, `hierarchy`, `grow`, `metatile` | `identity`: 1 cell = 1 piece. `hierarchy`: a piece = all tiles under one supertile (Penrose, hat, spectre only). `grow`: random region growing. `metatile`: hat H/T/P/F clusters (1–4 hats per piece) |
 | `level` | int or `"auto"` | `"auto"` | ≥ 1 | `hierarchy` only: how many subdivision levels a piece spans (cells per piece ≈ 2.6^level). Auto = 2 (about 7 rhombi per piece) |
 | `cells_per_piece` | float or `"auto"` | `"auto"` | ≥ 1 | `grow` only: mean piece size in cells |
 | `compactness` | float | `0.5` | 0–1 | `grow` only: 1 = round pieces, 0 = tentacle-like pieces (more shape lock, more fragile) |
@@ -185,7 +185,7 @@ constructed (§6.2).
 | `tolerance_k` | float | `3.0` | ≥ 1 | Connector shapes closer than `tolerance_k × clearance` (Hausdorff distance) count as interchangeable |
 | `flippable` | bool | `false` | — | Also compare mirrored signatures. Needed if pieces carry no top marking |
 | `max_iter` | int | `2000` | ≥ 0 | Maximum connector re-draws in the repair loop (at most 10 verification rounds) |
-| `exact_solver` | string | `"auto"` | `auto`, `always`, `never` | Backtracking cross-check that counts assemblies (up to 2). `auto` runs it when there are ≤ 30 pieces |
+| `exact_solver` | string | `"auto"` | `auto`, `always`, `never` | Backtracking cross-check that counts assemblies (up to 2). `auto` runs it when there are ≤ 60 pieces |
 | `allow_ambiguous` | bool | `false` | — | Kept for compatibility: outputs are always written, and the exit code is still 2 if ambiguous pairs remain |
 
 ### 3.8 `[fabrication]` (§5.3, §8)
@@ -211,7 +211,7 @@ constructed (§6.2).
 | `floor` | float | `1.6` | > 0 | Floor thickness (`tray` only) |
 | `height` | float or `"auto"` | `"auto"` | > 0 | Wall height above the floor. Auto = piece thickness |
 | `exterior` | string | `"bbox"` | `bbox`, `offset` | `bbox`: rectangular outside. `offset`: outside follows the region outline |
-| `connectors` | bool or `"auto"` | `"auto"` | — | Connectors between the frame and edge pieces. Auto = on for `natural` borders, off for `clip` |
+| `connectors` | bool or `"auto"` | `"auto"` | — | Connectors between the frame and edge pieces; the frame then counts as a fixed piece in the uniqueness and lock checks. Auto = on for `natural` borders, off for `clip` |
 | `max_segment` | float | `220.0` | > 0 | Split the frame into segments no longer than this, joined by dovetails. Should be less than the bed size |
 | `thumb_notch` | bool | `true` | — | Adds a notch in the wall for removing the first piece |
 
@@ -280,28 +280,33 @@ strategy = "hierarchy"      # level = 2 (default): about 7 rhombi per piece
 placement = "unlocked"      # supertile outlines rarely lock by themselves
 ```
 
-**Hats in a heart-shaped frame with matching border:**
+**Hats in a heart-shaped frame with matching border** (`examples/heart_hat.toml`):
 ```toml
 name = "heart_hat"
 [region]
 shape = "svg"
-path = "heart.svg"
+path = "heart.svg"          # relative to this config file
 size = [200, 180]
-border = "natural"
+border = "natural"          # frame follows the pieces; frame connectors on (auto)
 [tiling]
 kind = "hat"
-target_count = 120
-[connectors]
-kinds = ["tab", "tee", "dovetail"]
+target_count = 30           # <= 60 pieces: the exact solver proves uniqueness
 [frame]
-connectors = true
+exterior = "offset"
 ```
+Alternative with larger, more irregular pieces: `grouping.strategy = "metatile"` and
+`connectors.placement = "unlocked"`.
 
 **Spectre (all pieces the same handedness, no mirrored pieces):**
 ```toml
 [tiling]
 kind = "spectre"
-target_count = 80
+target_count = 25           # Spectre edges are short: fewer, larger pieces carry tabs
+[grouping]
+strategy = "hierarchy"      # optional: supertiles as pieces
+level = 1
+[connectors]
+placement = "unlocked"
 ```
 
 **Connector-free, locking by shape (`swirl` since M2, lock-aware `grow` since M3):**
@@ -349,6 +354,9 @@ formats = ["svg", "dxf"]
 | Symptom (report / exit code 2) | What to change |
 |--------------------------------|----------------|
 | `ambiguous_pairs > 0` (joint-level) | Add connector kinds (`["tab", "swirl"]`), widen `head_size`, raise `max_iter`, or lower `target_count` |
+| `guarantee` values | `exact` (solver proved one assembly, ≤ 60 pieces) > `strict` (all connector shapes unique) > `joint-level` (heuristic) |
+| Loose pieces with `spectre` | Spectre edges are short and equal: lower `target_count` (larger pieces), use `hierarchy` with `level = 1`, or reduce `connectors.head_size` |
+| Many ambiguous pairs with hats or Spectres (`identity`) | Identical tile outlines repeat; keep `target_count` ≤ 60 so the exact solver decides, or use `metatile`/`hierarchy` grouping |
 | `guarantee = "joint-level"` instead of `"strict"` | Normal above ~25 pieces (limited number of distinguishable tab shapes, DESIGN §7.2). For `strict`: fewer pieces, wider `head_size`, or mixed kinds |
 | Many `skipped_infeasible` with `swirl` | Joints too short: raise `connectors.min_edge` to about 22 and lower `target_count` |
 | Loose pieces or ambiguity with `grouping.strategy = "grow"` and `kinds = ["none"]` | Pure shape lock leaves about half of all joints unlocked; use `connectors.placement = "unlocked"` with `kinds = ["tab"]` (hybrid), or lower `grouping.compactness` for more arms |

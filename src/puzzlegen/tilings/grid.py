@@ -21,7 +21,7 @@ from shapely.geometry import Polygon
 
 from ..config import Config
 from ..planar_map import PlanarMap
-from .voronoi import clipped_cells
+from .voronoi import clipped_cells, polygon_parts
 
 
 def generate(region: Polygon, n: int, rng: np.random.Generator, cfg: Config) -> PlanarMap:
@@ -51,9 +51,7 @@ def square(region: Polygon, n: int, jitter: float, rng: np.random.Generator) -> 
             idx = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)]
             polys.append(np.array([[gx[a], gy[a]] for a in idx]))
     if not is_rect:
-        clipped = [Polygon(p).intersection(region) for p in polys]
-        polys = [np.asarray(c.exterior.coords)[:-1] for c in clipped
-                 if isinstance(c, Polygon) and c.area > 1e-9]
+        polys = polygon_parts([Polygon(p).intersection(region) for p in polys])
     return PlanarMap.from_polygons(polys)
 
 
@@ -71,4 +69,4 @@ def hexagonal(region: Polygon, n: int, jitter: float, rng: np.random.Generator) 
     seeds = np.array(seeds) + rng.uniform(-jitter, jitter, (len(seeds), 2)) * s
     inside = shapely.contains_xy(region, seeds[:, 0], seeds[:, 1])
     cells = clipped_cells(region, seeds[inside])
-    return PlanarMap.from_polygons([np.asarray(c.exterior.coords)[:-1] for c in cells])
+    return PlanarMap.from_polygons(polygon_parts(cells))

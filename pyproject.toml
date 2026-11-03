@@ -16,7 +16,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "hypothesis>=6"]
+dev = ["pytest>=7", "hypothesis>=6", "svgelements>=1.9"]
+svg = ["svgelements>=1.9"]
 
 [project.scripts]
 puzzlegen = "puzzlegen.cli:main"

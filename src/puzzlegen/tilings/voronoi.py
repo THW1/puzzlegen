@@ -6,9 +6,8 @@
 #              (G7). Bridson only fixes a radius and the count then varies.
 #              Four far-away ghost seeds make every real Voronoi cell finite, so no
 #              infinite-ridge handling is needed; cells are then clipped with Shapely.
-# Constraints: Region must be convex for the clip to give one polygon per seed (true for
-#              the M0 rectangle). Non-convex regions arrive in M1 and need MultiPolygon
-#              handling here.
+#              Non-convex regions (SVG outlines): a clipped cell may fall apart; every
+#              part becomes its own cell (polygon_parts); Lloyd uses the largest part.
 # Related:     planar_map.PlanarMap.from_polygons snaps the independently computed
 #              boundary intersection points of neighbouring cells together.
 # Tests:       tests/test_partition.py
@@ -32,9 +31,24 @@ def generate(region: Polygon, n: int, rng: np.random.Generator, cfg: Config) -> 
         seeds = uniform(region, n, rng)
     cells = clipped_cells(region, seeds)
     for _ in range(cfg["tiling.voronoi.lloyd"]):
-        seeds = np.array([c.centroid.coords[0] for c in cells])
+        seeds = np.array([_main_part(c).centroid.coords[0] for c in cells])
         cells = clipped_cells(region, seeds)
-    return PlanarMap.from_polygons([np.asarray(c.exterior.coords)[:-1] for c in cells])
+    return PlanarMap.from_polygons(polygon_parts(cells))
+
+
+def _main_part(g):
+    return max(getattr(g, "geoms", [g]), key=lambda p: p.area)
+
+
+def polygon_parts(cells) -> list[np.ndarray]:
+    """Open rings of all polygon parts (a cell clipped by a non-convex region can fall
+    apart into several pieces; each becomes its own cell)."""
+    out = []
+    for c in cells:
+        for g in getattr(c, "geoms", [c]):
+            if isinstance(g, Polygon) and g.area > 1e-6:
+                out.append(np.asarray(g.exterior.coords)[:-1])
+    return out
 
 
 def uniform(region: Polygon, n: int, rng: np.random.Generator) -> np.ndarray:
@@ -70,7 +84,7 @@ def clipped_cells(region: Polygon, seeds: np.ndarray) -> list[Polygon]:
         reg = vor.regions[vor.point_region[i]]
         assert reg and -1 not in reg, "ghost seeds must bound all real cells"
         cell = Polygon(vor.vertices[reg]).intersection(region)
-        if not isinstance(cell, Polygon) or cell.is_empty:
-            raise ValueError("clipped Voronoi cell is not a single polygon")
-        cells.append(cell)
+        if cell.is_empty:
+            raise ValueError("clipped Voronoi cell is empty")
+        cells.append(cell)                 # Polygon, or MultiPolygon for non-convex regions
     return cells

@@ -42,18 +42,25 @@ def is_locking(pts: np.ndarray, margin_deg: float) -> bool:
 
 
 def joint_report(m: PlanarMap, margin_deg: float) -> dict:
-    """Lock status of all interior joints and pieces without any locking joint."""
+    """Lock status of all interior joints and pieces without any locking joint. A joint
+    with the frame that locks (frame connectors) also holds its edge piece."""
     locked_by_face: dict[int, int] = {f: 0 for f in m.inner_faces()}
-    n_locked = n_joints = 0
+    n_locked = n_joints = frame_locked = 0
     for c in range(len(m.curve_he)):
-        if not m.is_interior_curve(c):
+        h = m.curve_he[c]
+        faces = [f for f in (m.face[h], m.face[m.twin[h]]) if f != 0]
+        interior = len(faces) == 2
+        if not interior and m.curve_spec[c] is None:
             continue
-        n_joints += 1
-        if is_locking(m.curve_pts[c], margin_deg):
-            n_locked += 1
-            h = m.curve_he[c]
-            locked_by_face[m.face[h]] += 1
-            locked_by_face[m.face[m.twin[h]]] += 1
+        locks = is_locking(m.curve_pts[c], margin_deg)
+        if interior:
+            n_joints += 1
+            n_locked += locks
+        else:
+            frame_locked += locks
+        if locks:
+            for f in faces:
+                locked_by_face[f] += 1
     loose = sorted(f for f, k in locked_by_face.items() if k == 0)
     return {"joints": n_joints, "locked": n_locked, "unlocked": n_joints - n_locked,
-            "loose_pieces": loose}
+            "frame_locked": frame_locked, "loose_pieces": loose}

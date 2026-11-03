@@ -56,21 +56,46 @@ class Frame:
     cuts: dict
 
 
-def make_frame(region: Polygon, cfg: Config) -> Frame | None:
+def connectors_enabled(cfg: Config) -> bool:
+    """frame.connectors resolved: "auto" = on for natural borders (DESIGN 3)."""
+    if cfg["frame.style"] == "none":
+        return False
+    v = cfg["frame.connectors"]
+    return cfg["region.border"] != "clip" if v == "auto" else bool(v)
+
+
+def exterior_of(cavity: Polygon, cfg: Config) -> Polygon:
+    wall = cfg["frame.wall"]
+    if cfg["frame.exterior"] == "offset":
+        return cavity.buffer(wall, quad_segs=16)
+    x0, y0, x1, y1 = cavity.bounds
+    rr = min(wall, 5.0)   # outer corner radius
+    return box(x0 - wall, y0 - wall, x1 + wall, y1 + wall).buffer(
+        -rr, join_style="mitre").buffer(rr, quad_segs=8)
+
+
+def make_frame(region: Polygon, cfg: Config, pieces: list[Polygon] | None = None
+               ) -> Frame | None:
+    """`pieces` (exact outlines): with frame connectors the cavity follows the pieces'
+    union, which includes heads reaching into the frame and sockets cut into pieces."""
     style = cfg["frame.style"]
     if style == "none":
         return None
     c = cfg["fabrication.clearance"]
     wall = cfg["frame.wall"]
-    cavity = region.buffer(c / 2, join_style="mitre")
-    if cfg["frame.exterior"] == "offset":
-        exterior = cavity.buffer(wall, quad_segs=16)
-    else:
-        x0, y0, x1, y1 = cavity.bounds
-        rr = min(wall, 5.0)   # outer corner radius
-        exterior = box(x0 - wall, y0 - wall, x1 + wall, y1 + wall).buffer(
-            -rr, join_style="mitre").buffer(rr, quad_segs=8)
+    base = region
+    if pieces is not None and connectors_enabled(cfg):
+        u = unary_union([p.buffer(1e-7) for p in pieces]).buffer(-1e-7)
+        base = max(getattr(u, "geoms", [u]), key=lambda g: g.area)
+        base = Polygon(base.exterior)
+    cavity = base.buffer(c / 2, join_style="mitre")
+    exterior = exterior_of(region.buffer(c / 2, join_style="mitre"), cfg)
     wall2d = exterior.difference(cavity)
+    # Natural (jagged) cavities make thin frame spikes reach into narrow notches between
+    # border pieces; remove spikes thinner than min_feature (they would break off) and
+    # leave a small void instead (M4, heart-shaped hat puzzles).
+    r = cfg["fabrication.min_feature"] / 2
+    wall2d = wall2d.buffer(-r, join_style="mitre").buffer(r, join_style="mitre").intersection(exterior)
     xs, ys = _cut_positions(exterior, cfg["frame.max_segment"])
     if cfg["frame.thumb_notch"]:
         wall2d = wall2d.difference(_notch(cavity, wall, cfg["fabrication.min_feature"], xs))

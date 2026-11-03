@@ -139,7 +139,7 @@ SCHEMA: dict[str, tuple[Any, Callable[[str, Any], Any]]] = {
     "tiling.hat.levels": ("auto", _auto_or(_num(int, 1))),
     "tiling.hat.flip_mode": (False, _bool),
     "tiling.spectre.levels": ("auto", _auto_or(_num(int, 1))),
-    "tiling.spectre.curved_edges": (True, _bool),
+    "tiling.spectre.curved_edges": (False, _bool),
     "tiling.grid.cell": ("square", _choice("square", "hex")),
     "tiling.grid.jitter": (0.15, _num(float, 0, 0.4)),
 
@@ -293,6 +293,13 @@ def load(path: str | Path | None, overrides: list[str] = ()) -> Config:
             raise ConfigError(f"cannot read config: {e}") from None
     for a in overrides:
         apply_override(raw, a)
+    # A relative region.path is resolved against the config file's folder first (so
+    # examples work from any working directory), then against the working directory.
+    rp = raw.get("region.path")
+    if path is not None and isinstance(rp, str) and not Path(rp).is_absolute():
+        cand = Path(path).parent / rp
+        if cand.exists():
+            raw["region.path"] = str(cand)
     return build(raw)
 
 
@@ -321,13 +328,13 @@ def _cross_check(v: dict[str, Any]) -> None:
 # ---------------------------------------------------------------- milestones
 # (key, allowed values or predicate, milestone that adds the rest)
 _IMPLEMENTED: list[tuple[str, Callable[[Any], bool], str]] = [
-    ("region.shape", lambda x: x != "svg", "M4"),
-    ("region.border", lambda x: x == "clip", "M4"),
-    ("tiling.kind", lambda x: x in ("voronoi", "grid", "penrose"), "M4"),
+    ("tiling.kind", lambda x: x in ("voronoi", "grid", "penrose", "hat", "spectre"), "-"),
     ("tiling.penrose.variant", lambda x: x == "p3", "M6"),
     ("tiling.rotation", lambda x: x == 0, "M6"),
     ("tiling.voronoi.size_spread", lambda x: x == 0, "M6"),
-    ("grouping.strategy", lambda x: x != "metatile", "M4"),
+    ("tiling.hat.a", lambda x: abs(x - 1.0) < 1e-9, "M6 (other Tile(a,b) shapes)"),
+    ("tiling.hat.b", lambda x: abs(x - 1.7320508) < 1e-6, "M6 (other Tile(a,b) shapes)"),
+    ("tiling.spectre.curved_edges", lambda x: not x, "M6"),
     ("connectors.kinds", lambda x: set(x) <= {"tab", "swirl", "none"}, "M6"),
     ("fabrication.mode", lambda x: x == "fdm", "M5"),
     ("cleanup.split_degree4", lambda x: not x, "M6"),

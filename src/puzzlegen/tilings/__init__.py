@@ -14,7 +14,7 @@ from shapely.geometry import Polygon
 
 from ..config import Config
 from ..planar_map import PlanarMap
-from . import grid, penrose, voronoi
+from . import grid, penrose, substitution, voronoi
 
 Generator = Callable[[Polygon, int, np.random.Generator, Config], PlanarMap]
 
@@ -22,4 +22,6 @@ REGISTRY: dict[str, Generator] = {
     "voronoi": voronoi.generate,
     "grid": grid.generate,
     "penrose": penrose.generate,
+    "hat": substitution.generate_hat,
+    "spectre": substitution.generate_spectre,
 }

@@ -18,12 +18,13 @@ from dataclasses import dataclass
 
 import numpy as np
 from shapely.geometry import Polygon
+from shapely.ops import unary_union
 
-from . import checks, connectors, grouping, interlock, uniqueness
+from . import border, checks, connectors, grouping, interlock, uniqueness
 from .cleanup import cleanup
 from .config import Config, check_implemented, piece_target
 from .fabricate import Fabricated, fabricate
-from .frame import Frame, make_frame
+from .frame import Frame, connectors_enabled, make_frame
 from .planar_map import PlanarMap
 from .region import make_region
 from .tilings import REGISTRY
@@ -54,20 +55,34 @@ def run(cfg: Config) -> Result:
     if cfg["grouping.strategy"] == "grow":
         cpp = cfg["grouping.cells_per_piece"]
         n_cells = round(n * (grouping.CELLS_PER_PIECE if cpp == "auto" else cpp))
-    pmap = REGISTRY[cfg["tiling.kind"]](region, n_cells, rng, cfg)
+    # Natural border: tile a larger area, then keep whole pieces (border.select).
+    natural = cfg["region.border"] != "clip"
+    gen_region, grow_f = region, 1.0
+    if natural:
+        gen_region = region.buffer(border.margin(cfg, region, n))
+        grow_f = gen_region.area / region.area
+    pmap = REGISTRY[cfg["tiling.kind"]](gen_region, round(n_cells * grow_f), rng, cfg)
     pmap.check()
     pmap, cleanup_stats = cleanup(pmap, cfg)
     pmap.check()
-    pmap, group_stats = grouping.group(pmap, cfg, rng, n)
+    pmap, group_stats = grouping.group(pmap, cfg, rng, round(n * grow_f))
     pmap.check()
+    if natural:
+        pmap, region = border.select(pmap, region)
+        pmap.check()
     cleanup_stats = {**cleanup_stats, **({"grouping": group_stats} if group_stats else {})}
-    stats, alpha = connectors.assign(pmap, cfg, rng)
+    frame_conn = connectors_enabled(cfg)
+    stats, alpha = connectors.assign(pmap, cfg, rng, region, frame_conn)
     stats["shape_joints"] = connectors.mark_shapes(pmap)
     ver = _verify_and_repair(pmap, region, cfg, rng, alpha, stats)
     pieces = [pmap.face_polygon(f) for f in pmap.inner_faces()]
+    if frame_conn:
+        # Heads reach into the frame and sockets cut into pieces: the puzzle's outline is
+        # now the pieces' union (the same base frame.make_frame uses for the cavity).
+        region = pieces_outline(pieces)
     return Result(cfg, region, pmap, pieces, stats, checks.partition(pieces, region),
                   interlock.joint_report(pmap, cfg["connectors.lock_margin"]), cleanup_stats,
-                  fabricate(pieces, cfg), make_frame(region, cfg), ver,
+                  fabricate(pieces, cfg), make_frame(region, cfg, pieces), ver,
                   color_sets(len(pieces), cfg["output.color_sets"], cfg["seed"]))
 
 
@@ -104,7 +119,7 @@ def _verify_and_repair(pmap: PlanarMap, region: Polygon, cfg: Config,
     redraws = rounds = 0
     while True:
         pieces = [pmap.face_polygon(f) for f in pmap.inner_faces()]
-        v = uniqueness.verify(pmap, pieces, region, tau, flip)
+        v = uniqueness.verify(pmap, pieces, _outline(pieces, region, cfg), tau, flip)
         if not v.joint or redraws >= budget or rounds >= REPAIR_ROUNDS:
             break
         rounds += 1
@@ -135,8 +150,20 @@ def _verify_and_repair(pmap: PlanarMap, region: Polygon, cfg: Config,
         dropped = _drop_ambiguous(pmap, v.joint, cfg["connectors.lock_margin"], alpha)
         stats["dropped_ambiguous"] += dropped
     pieces = [pmap.face_polygon(f) for f in pmap.inner_faces()]
-    v = uniqueness.verify(pmap, pieces, region, tau, flip, cfg["uniqueness.exact_solver"])
+    v = uniqueness.verify(pmap, pieces, _outline(pieces, region, cfg), tau, flip,
+                          cfg["uniqueness.exact_solver"])
     return {**v.report(), "redraws": redraws}
+
+
+def pieces_outline(pieces: list[Polygon]) -> Polygon:
+    u = unary_union([p.buffer(1e-7) for p in pieces]).buffer(-1e-7)
+    main = max(getattr(u, "geoms", [u]), key=lambda g: g.area)
+    return Polygon(main.exterior)
+
+
+def _outline(pieces, region: Polygon, cfg: Config) -> Polygon:
+    """Region for the exact solver: with frame connectors the pieces' union."""
+    return pieces_outline(pieces) if connectors_enabled(cfg) else region
 
 
 def _drop_ambiguous(pmap: PlanarMap, pairs, margin: float, alpha) -> int:

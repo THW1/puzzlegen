@@ -1,0 +1,17 @@
+# Hats in a heart-shaped frame whose cavity follows the pieces (natural border),
+# with connectors between the edge pieces and the frame.
+name = "heart_hat"
+seed = 1
+
+[region]
+shape = "svg"
+path = "heart.svg"
+size = [200.0, 180.0]
+border = "natural"
+
+[tiling]
+kind = "hat"
+target_count = 30
+
+[frame]
+exterior = "offset"

@@ -18,15 +18,18 @@
 #                (T-junctions); possible in principle, but it would have to continue
 #                consistently through the whole puzzle.
 #              `ok` requires no joint-level ambiguity and a connected mate graph;
-#              `guarantee` says which level was reached.
+#              `guarantee` says which level was reached. If the exact solver ran to
+#              completion, its answer decides instead (guarantee "exact"): M4 hat puzzles
+#              showed 10-21 joint-level pairs where the solver proved one assembly.
 #              Rejected: a pose test (place A in B's socket, check overlap with B and the
 #              region). Convex pieces never overlap across a straight joint, and B
 #              itself may move in an alternative assembly, so the test excluded nothing
 #              valid (tried in M2, all pairs survived).
 #              Exact solver: depth-first placement of pieces through shape-compatible
 #              mates, counting overlap-free assemblies (inside the region) up to 2 with a
-#              node budget. T-junction placements are included; the first piece is fixed
-#              at its true pose.
+#              node budget. T-junction placements are included. With frame connectors the
+#              search starts from the fixed frame alone; otherwise the first piece is
+#              fixed (uniqueness up to a rigid motion).
 # Invariants:  Profiles are built from the current curves (run after connectors and after
 #              each repair). Frames: F = [[X Y o]] maps local to world coordinates.
 # Limitations: U3 (no pocket made by two pieces) is assumed from end_margin, not checked.
@@ -49,6 +52,7 @@ from .planar_map import PlanarMap
 
 POSE_EPS = 0.5          # mm^2 of overlap that makes a solver placement invalid
 SOLVER_BUDGET = 20000   # search nodes
+SOLVER_AUTO_MAX = 60    # pieces; was 30 until M4 - typical searches need < 100 nodes
 R_MATE = np.diag([-1.0, -1.0, 1.0])     # a ~ -b
 R_MIRROR = np.diag([1.0, -1.0, 1.0])    # mirrored a ~ -b (piece flipped over)
 
@@ -86,8 +90,8 @@ class Profile:
 def profiles(m: PlanarMap) -> list[Profile]:
     out = []
     for c, spec in enumerate(m.curve_spec):
-        if spec is None or not m.is_interior_curve(c):
-            continue
+        if spec is None:
+            continue                         # boundary connectors count: frame = face 0
         h = m.curve_he[c]
         a, b = m.verts[m.origin[h]], m.verts[m.origin[m.twin[h]]]
         for face, (local, F, lo, hi) in zip((m.face[h], m.face[m.twin[h]]),
@@ -199,13 +203,22 @@ class Verification:
     solver: dict | None = None
 
     @property
+    def exact(self) -> bool:
+        """The exact solver ran to completion and found exactly one assembly."""
+        return bool(self.solver and self.solver["complete"]
+                    and self.solver["solutions_found"] == 1)
+
+    @property
     def ok(self) -> bool:
+        if self.solver and self.solver["complete"]:
+            return self.exact and self.components == 1     # proven, overrides heuristics
         solver_ok = self.solver is None or self.solver["solutions_found"] <= 1
         return not self.joint and self.components == 1 and solver_ok
 
     def report(self) -> dict:
         return {"ok": self.ok,
-                "guarantee": "strict" if not self.strict else "joint-level",
+                "guarantee": ("exact" if self.exact else
+                              "strict" if not self.strict else "joint-level"),
                 "ambiguous_pairs": [list(x) for x in self.joint],
                 "shape_compatible_pairs": [list(x) for x in self.strict],
                 "mate_graph_components": self.components,
@@ -250,7 +263,7 @@ def verify(m: PlanarMap, pieces: list[Polygon], region: Polygon, tau: float,
             seen_j.add(key)
             v.joint.append((key[0], key[1], round(d, 4)))
     v.components, v.unmated_pieces = _mate_graph(m)
-    if solver == "always" or (solver == "auto" and m.n_faces - 1 <= 30):
+    if solver == "always" or (solver == "auto" and m.n_faces - 1 <= SOLVER_AUTO_MAX):
         v.solver = exact_solve(m, profs, pairs, pieces, region, tau)
     return v
 
@@ -265,8 +278,8 @@ def _mate_graph(m: PlanarMap) -> tuple[int, list[int]]:
         return x
     mated = set()
     for c, spec in enumerate(m.curve_spec):
-        if spec is None or not m.is_interior_curve(c):
-            continue
+        if spec is None:
+            continue                         # frame joints tie pieces to face 0
         h = m.curve_he[c]
         f, g = m.face[h], m.face[m.twin[h]]
         mated.update((f, g))
@@ -295,11 +308,13 @@ def exact_solve(m: PlanarMap, profs: list[Profile], pairs, pieces: list[Polygon]
     state = {"nodes": 0, "solutions": 0}
 
     def fits(f, T, placed):
+        if f == 0:
+            return False                     # the frame never moves
         g = _transform(shrunk[f], T)
         if g.difference(region_s).area > POSE_EPS:
             return False
         return all(g.intersection(_transform(shrunk[h], Th)).area <= POSE_EPS
-                   for h, Th in placed.items())
+                   for h, Th in placed.items() if h != 0)
 
     def dfs(placed: dict, resolved: frozenset):
         if state["solutions"] >= 2 or state["nodes"] >= SOLVER_BUDGET:
@@ -307,7 +322,7 @@ def exact_solve(m: PlanarMap, profs: list[Profile], pairs, pieces: list[Polygon]
         state["nodes"] += 1
         open_ = [i for f in placed for i in by_face.get(f, []) if i not in resolved]
         if not open_:
-            if len(placed) == len(faces):
+            if all(f in placed for f in faces):
                 state["solutions"] += 1
             return
         a = min(open_, key=lambda i: len(cand[i]))
@@ -321,7 +336,13 @@ def exact_solve(m: PlanarMap, profs: list[Profile], pairs, pieces: list[Polygon]
             elif fits(b.face, TB, placed):
                 dfs({**placed, b.face: TB}, resolved | {a, j})
 
-    dfs({faces[0]: np.eye(3)}, frozenset())
+    # The frame (face 0, present with frame connectors) is fixed at its true position,
+    # like the first piece; pieces held only by the frame are reached through it.
+    # With frame connectors the search starts from the fixed frame alone, so assemblies
+    # in which any piece (also the first) sits elsewhere are explored; without a frame
+    # the first piece is fixed (uniqueness up to a rigid motion).
+    start = {0: np.eye(3)} if 0 in by_face else {faces[0]: np.eye(3)}
+    dfs(start, frozenset())
     complete = state["nodes"] < SOLVER_BUDGET
     return {"solutions_found": state["solutions"], "nodes": state["nodes"],
             "complete": complete, "unique": state["solutions"] == 1 and complete}

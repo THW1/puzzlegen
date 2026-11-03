@@ -185,7 +185,7 @@ constructed (§6.2).
 | `tolerance_k` | float | `3.0` | ≥ 1 | Connector shapes closer than `tolerance_k × clearance` (Hausdorff distance) count as interchangeable |
 | `flippable` | bool | `false` | — | Also compare mirrored signatures. Needed if pieces carry no top marking |
 | `max_iter` | int | `2000` | ≥ 0 | Maximum connector re-draws in the repair loop (at most 10 verification rounds) |
-| `exact_solver` | string | `"auto"` | `auto`, `always`, `never` | Backtracking cross-check that counts assemblies (up to 2). `auto` runs it when there are ≤ 30 pieces |
+| `exact_solver` | string | `"auto"` | `auto`, `always`, `never` | Backtracking cross-check that counts assemblies (up to 2). `auto` runs it when there are ≤ 60 pieces |
 | `allow_ambiguous` | bool | `false` | — | Kept for compatibility: outputs are always written, and the exit code is still 2 if ambiguous pairs remain |
 
 ### 3.8 `[fabrication]` (§5.3, §8)
@@ -290,7 +290,7 @@ size = [200, 180]
 border = "natural"          # frame follows the pieces; frame connectors on (auto)
 [tiling]
 kind = "hat"
-target_count = 30           # <= 30 pieces: the exact solver proves uniqueness
+target_count = 30           # <= 60 pieces: the exact solver proves uniqueness
 [frame]
 exterior = "offset"
 ```
@@ -354,8 +354,8 @@ formats = ["svg", "dxf"]
 | Symptom (report / exit code 2) | What to change |
 |--------------------------------|----------------|
 | `ambiguous_pairs > 0` (joint-level) | Add connector kinds (`["tab", "swirl"]`), widen `head_size`, raise `max_iter`, or lower `target_count` |
-| `guarantee` values | `exact` (solver proved one assembly, ≤ 30 pieces) > `strict` (all connector shapes unique) > `joint-level` (heuristic) |
-| Many ambiguous pairs with hats or Spectres (`identity`) | Identical tile outlines repeat; keep `target_count` ≤ 30 so the exact solver decides, or use `metatile`/`hierarchy` grouping |
+| `guarantee` values | `exact` (solver proved one assembly, ≤ 60 pieces) > `strict` (all connector shapes unique) > `joint-level` (heuristic) |
+| Many ambiguous pairs with hats or Spectres (`identity`) | Identical tile outlines repeat; keep `target_count` ≤ 60 so the exact solver decides, or use `metatile`/`hierarchy` grouping |
 | `guarantee = "joint-level"` instead of `"strict"` | Normal above ~25 pieces (limited number of distinguishable tab shapes, DESIGN §7.2). For `strict`: fewer pieces, wider `head_size`, or mixed kinds |
 | Many `skipped_infeasible` with `swirl` | Joints too short: raise `connectors.min_edge` to about 22 and lower `target_count` |
 | Loose pieces or ambiguity with `grouping.strategy = "grow"` and `kinds = ["none"]` | Pure shape lock leaves about half of all joints unlocked; use `connectors.placement = "unlocked"` with `kinds = ["tab"]` (hybrid), or lower `grouping.compactness` for more arms |

@@ -20,7 +20,7 @@ Works now:
 - **Natural border**: whole pieces along the outline; the frame follows them, and
   **frame connectors** tie edge pieces to the frame.
 - Connectors: classic tabs and `swirl` joints; hybrid placement (`unlocked`).
-- Uniqueness check with three guarantee levels: `exact` (solver proof, ≤ 30 pieces),
+- Uniqueness check with three guarantee levels: `exact` (solver proof, ≤ 60 pieces),
   `strict`, `joint-level`; repair loop and mate-graph check (`puzzlegen verify`).
 - Fabrication checks, tray/ring frame with dovetailed segments, STL with chamfers and
   engraved IDs, colour sets for multi-colour printing, `puzzlegen coupon`, JSON report.

@@ -44,3 +44,12 @@ def test_placement_unlocked_skips_locking_chains():
     shapes = [c for c, s in enumerate(m.curve_spec) if s is not None and s.kind == "shape"]
     assert any(is_locking(m.curve_pts[c], 20) for c in shapes)
     assert checks.partition(res.pieces, res.region)["ok"]
+
+
+def test_regression_concave_chained_ring_orientation():
+    """A grown concave piece whose junction-only polygon is clockwise was reversed by
+    from_rings and produced duplicate edges (M4 stress run, seed 0)."""
+    res = pipeline.run(build({"seed": 0, "tiling.kind": "voronoi", "grouping.strategy": "grow",
+                              "tiling.target_count": 30, "connectors.placement": "unlocked",
+                              "grouping.compactness": 0.2}))
+    assert res.partition["ok"]

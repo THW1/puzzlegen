@@ -72,7 +72,8 @@ class PlanarMap:
 
     @classmethod
     def from_rings(cls, verts: np.ndarray, rings: list[list[int]], tags: list | None = None,
-                   paths: dict[tuple[int, int], np.ndarray] | None = None) -> "PlanarMap":
+                   paths: dict[tuple[int, int], np.ndarray] | None = None,
+                   oriented: bool = False) -> "PlanarMap":
         """Build a map from vertex positions and cell rings (vertex indices). Unused
         vertices are dropped, collapsed vertices removed, rings oriented CCW.
         `paths` maps a directed vertex pair (u, v) of a ring to the polyline of that
@@ -83,7 +84,9 @@ class PlanarMap:
             ring = [v for k, v in enumerate(ring) if v != ring[k - 1]]  # drop collapsed
             if len(ring) < 3:
                 continue
-            if _signed_area(verts[ring]) < 0:
+            # Chained rings list junctions only; their coarse polygon can come out
+            # clockwise for concave pieces, so the caller orients the full rings.
+            if not oriented and _signed_area(verts[ring]) < 0:
                 ring = ring[::-1]
             clean.append(ring)
             clean_tags.append(tags[i] if tags is not None else None)
@@ -155,6 +158,7 @@ class PlanarMap:
         polyline runs through them. Every ring keeps at least 3 junctions (vertices
         are promoted if needed, e.g. for a piece enclosed by a single neighbour)."""
         verts = np.asarray(verts, float)
+        rings = [r if _signed_area(verts[r]) >= 0 else r[::-1] for r in rings]   # CCW
         users: dict[int, int] = {}
         owner: set[tuple[int, int]] = set()
         for r in rings:
@@ -176,21 +180,35 @@ class PlanarMap:
                     step = max(1, len(r) // 3)
                     junction.update(r[::step][:3])
                     changed = True
-        new_rings, paths = [], {}
-        for r in rings:
-            n = len(r)
-            start = next(k for k, v in enumerate(r) if v in junction)
-            seq = [r[(start + k) % n] for k in range(n)] + [r[start]]
-            ring, path = [], [seq[0]]
-            for v in seq[1:]:
-                path.append(v)
-                if v in junction:
-                    ring.append(path[0])
-                    if len(path) > 2:
-                        paths[(path[0], path[-1])] = verts[path]
-                    path = [v]
-            new_rings.append(ring)
-        return cls.from_rings(verts, new_rings, tags, paths)
+        while True:
+            new_rings, chains, conflict = [], {}, set()
+            for r in rings:
+                n = len(r)
+                start = next(k for k, v in enumerate(r) if v in junction)
+                seq = [r[(start + k) % n] for k in range(n)] + [r[start]]
+                ring, path = [], [seq[0]]
+                for v in seq[1:]:
+                    path.append(v)
+                    if v in junction:
+                        ring.append(path[0])
+                        p = tuple(path)
+                        key, rev = (p[0], p[-1]), (p[-1], p[0])
+                        # Two different chains between the same two junctions (e.g. a
+                        # piece touching the outline and a neighbour between the same
+                        # junctions, M4) would become duplicate edges.
+                        if key in chains and chains[key] != p:
+                            conflict |= {p, chains[key]}
+                        if rev in chains and chains[rev] != p[::-1]:
+                            conflict |= {p, chains[rev]}
+                        chains[key] = p
+                        path = [v]
+                new_rings.append(ring)
+            fix = {p[len(p) // 2] for p in conflict if len(p) > 2} - junction
+            if not conflict or not fix:
+                break                  # a remaining conflict is a real overlap: raise below
+            junction |= fix            # split colliding chains at their middle vertex
+        paths = {k: verts[list(p)] for k, p in chains.items() if len(p) > 2}
+        return cls.from_rings(verts, new_rings, tags, paths, oriented=True)
 
     def _add_he(self, origin: int, face: int) -> int:
         self.origin.append(origin)

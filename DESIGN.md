@@ -480,7 +480,7 @@ So two levels are reported (`checks.uniqueness.guarantee`):
 
 | Level | Condition | Meaning |
 |-------|-----------|---------|
-| `exact` | The exact solver (≤ 30 pieces) ran to completion and found exactly one assembly | Proven for all assemblies reachable through mates (with a frame: starting from the fixed frame). Overrides the levels below when available (M4) |
+| `exact` | The exact solver (≤ 60 pieces) ran to completion and found exactly one assembly | Proven for all assemblies reachable through mates (with a frame: starting from the fixed frame). Overrides the levels below when available (M4) |
 | `strict` | U2 holds for every connector | Unique by the argument above (with U1, U3 and a connected mate graph) |
 | `joint-level` | No shape-compatible pair whose joints also end at the same two points when mated | A false mate would need the rest of the joint bordered by other pieces meeting it mid-edge (T-junctions), and that would have to continue consistently through the whole puzzle. Not excluded in principle, but very contrived |
 
@@ -508,7 +508,7 @@ near-fits.
 - **Interlock (pairwise separation) test**: decided analytically per joint by the
   turning criterion (§5.4). A sampled translation test for pairs of pieces that share
   several joints follows in M3.
-- **Exact solver** (`uniqueness.exact_solver`, auto for ≤ 30 pieces): depth-first
+- **Exact solver** (`uniqueness.exact_solver`, auto for ≤ 60 pieces): depth-first
   placement through shape-compatible mates, counting overlap-free assemblies inside
   the region up to 2, with a 20 000-node budget. This includes T-junction placements.
   It only explores assemblies whose pieces attach to the first piece through mates.

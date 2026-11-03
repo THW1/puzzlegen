@@ -52,6 +52,7 @@ from .planar_map import PlanarMap
 
 POSE_EPS = 0.5          # mm^2 of overlap that makes a solver placement invalid
 SOLVER_BUDGET = 20000   # search nodes
+SOLVER_AUTO_MAX = 60    # pieces; was 30 until M4 - typical searches need < 100 nodes
 R_MATE = np.diag([-1.0, -1.0, 1.0])     # a ~ -b
 R_MIRROR = np.diag([1.0, -1.0, 1.0])    # mirrored a ~ -b (piece flipped over)
 
@@ -262,7 +263,7 @@ def verify(m: PlanarMap, pieces: list[Polygon], region: Polygon, tau: float,
             seen_j.add(key)
             v.joint.append((key[0], key[1], round(d, 4)))
     v.components, v.unmated_pieces = _mate_graph(m)
-    if solver == "always" or (solver == "auto" and m.n_faces - 1 <= 30):
+    if solver == "always" or (solver == "auto" and m.n_faces - 1 <= SOLVER_AUTO_MAX):
         v.solver = exact_solve(m, profs, pairs, pieces, region, tau)
     return v
 
